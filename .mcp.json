@@ -1,0 +1,9 @@
+{
+  "commontrace": {
+    "type": "http",
+    "url": "${COMMONTRACE_MCP_URL:-http://localhost:8080/mcp}",
+    "headers": {
+      "X-API-Key": "${COMMONTRACE_API_KEY}"
+    }
+  }
+}

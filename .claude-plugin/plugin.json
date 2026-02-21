@@ -1,0 +1,8 @@
+{
+  "name": "commontrace",
+  "description": "CommonTrace knowledge base integration for Claude Code agents. Auto-searches for relevant traces at session start, provides /trace:search and /trace:contribute commands.",
+  "author": {
+    "name": "CommonTrace",
+    "email": "support@commontrace.dev"
+  }
+}
