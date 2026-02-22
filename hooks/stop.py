@@ -1,112 +1,200 @@
 #!/usr/bin/env python3
 """
-CommonTrace Stop hook.
+CommonTrace Stop hook — contribution prompt on resolution.
 
-After a task completes, prompts the agent to consider contributing to CommonTrace.
+Fires every time Claude finishes a response. Detects when a problem was
+resolved (user confirmation or Claude self-proof) and prompts to contribute.
 
-Loop prevention:
-  1. Checks stop_hook_active first — exits 0 immediately if true.
-  2. Checks a session-scoped flag file — exits 0 if already prompted this session.
+Allows multiple contributions per session, but:
+  - Never fires twice in a row (stop_hook_active guard)
+  - Cooldown: won't re-prompt within 60 seconds of the last prompt
+  - Dedup: won't prompt for the same resolution twice (topic hash)
 
-Fires at most once per session, only when completion signals are detected.
-Exits 0 silently on any error — never prevents Claude from stopping.
+Reads the last few transcript messages to detect user satisfaction signals.
 """
 
+import hashlib
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 
-COMPLETION_SIGNALS = [
-    "completed", "done", "finished", "implemented", "fixed",
-    "solved", "resolved", "deployed", "successfully",
+RESOLUTION_DIR = Path("/tmp/commontrace-resolutions")
+
+# Claude's own signals that a problem was solved
+ASSISTANT_SIGNALS = [
+    "fixed", "solved", "resolved", "working now", "works now",
+    "that fixes", "that resolves", "issue is resolved",
+    "tests pass", "all tests pass", "build succeeds",
+    "successfully", "the fix was", "root cause was",
+    "the problem was", "the issue was",
 ]
 
-COMPLETION_PATTERNS = [
-    "task is complete", "changes are ready", "commit created",
-    "all tests pass", "tests pass", "working now",
+# User satisfaction signals (checked from transcript)
+USER_CONFIRMATION = [
+    "that works", "it works", "works now", "nice", "perfect",
+    "thanks", "thank you", "great", "awesome", "good job",
+    "exactly", "yes", "yep", "correct", "that's it",
+    "fixed", "solved", "finally",
 ]
 
-FLAG_DIR = Path("/tmp")
+# Skip signals — user is still unhappy
+USER_REJECTION = [
+    "no", "wrong", "not working", "still broken", "nope",
+    "that's not", "doesn't work", "didn't work", "try again",
+    "still failing", "same error", "not right",
+]
+
+COOLDOWN_SECONDS = 60
 
 
 def get_session_key(data: dict) -> str:
-    """
-    Derive a stable session key from stdin data.
-
-    Prefer session_id from the hook payload (stable across stop invocations
-    in the same session). Fall back to the parent PID (os.getppid()) which
-    is stable within a Claude session. Never use os.getpid() — each hook
-    invocation spawns a fresh Python process with a unique PID.
-    """
     session_id = data.get("session_id")
-    if session_id:
-        return str(session_id)
-    return str(os.getppid())
+    return str(session_id) if session_id else str(os.getppid())
 
 
-def has_completion_signal(message: str) -> bool:
-    """
-    Return True if last_assistant_message contains a task completion signal.
+def read_last_user_messages(transcript_path: str, count: int = 3) -> list[str]:
+    """Read the last N user messages from the transcript JSONL file."""
+    messages = []
+    try:
+        path = Path(transcript_path)
+        if not path.exists():
+            return []
+        lines = path.read_text(encoding="utf-8").strip().split("\n")
+        for line in reversed(lines):
+            if not line.strip():
+                continue
+            try:
+                entry = json.loads(line)
+                if entry.get("role") == "user":
+                    content = entry.get("content", "")
+                    if isinstance(content, list):
+                        # Extract text from content blocks
+                        for block in content:
+                            if isinstance(block, dict) and block.get("type") == "text":
+                                messages.append(block["text"])
+                    elif isinstance(content, str):
+                        messages.append(content)
+                    if len(messages) >= count:
+                        break
+            except json.JSONDecodeError:
+                continue
+    except OSError:
+        pass
+    return messages
 
-    Signal words are matched at word boundaries (not substrings) via word list.
-    Patterns are matched as substrings of the lowercased message.
-    """
-    lowered = message.lower()
 
-    # Word boundary check: split into words, look for signal words
-    words = set(lowered.split())
-    for signal in COMPLETION_SIGNALS:
-        if signal in words:
-            return True
+def has_resolution_signal(assistant_msg: str, user_messages: list[str]) -> bool:
+    """Detect if a problem was just resolved."""
+    lowered_assistant = assistant_msg.lower()
 
-    # Substring check for multi-word patterns
-    for pattern in COMPLETION_PATTERNS:
-        if pattern in lowered:
+    # Check if user rejected (takes priority)
+    for msg in user_messages[:1]:  # Only check most recent user message
+        lowered = msg.lower()
+        for pattern in USER_REJECTION:
+            if pattern in lowered:
+                return False
+
+    # Check user confirmation
+    for msg in user_messages[:2]:  # Check last 2 user messages
+        lowered = msg.lower()
+        for pattern in USER_CONFIRMATION:
+            if pattern in lowered:
+                return True
+
+    # Check Claude's own completion signals
+    words = set(lowered_assistant.split())
+    for signal in ASSISTANT_SIGNALS:
+        if " " in signal:
+            if signal in lowered_assistant:
+                return True
+        elif signal in words:
             return True
 
     return False
 
 
+def topic_hash(message: str) -> str:
+    """Hash the first 200 chars of Claude's message for dedup."""
+    return hashlib.md5(message[:200].encode()).hexdigest()[:12]
+
+
+def was_recently_prompted(session_key: str) -> bool:
+    """Check cooldown — don't prompt within COOLDOWN_SECONDS of last prompt."""
+    cooldown_file = RESOLUTION_DIR / f"cooldown-{session_key}"
+    if cooldown_file.exists():
+        try:
+            last_time = float(cooldown_file.read_text(encoding="utf-8"))
+            if time.time() - last_time < COOLDOWN_SECONDS:
+                return True
+        except (ValueError, OSError):
+            pass
+    return False
+
+
+def was_already_prompted_for(session_key: str, msg_hash: str) -> bool:
+    """Check if we already prompted for this exact resolution."""
+    dedup_file = RESOLUTION_DIR / f"dedup-{session_key}-{msg_hash}"
+    return dedup_file.exists()
+
+
+def mark_prompted(session_key: str, msg_hash: str) -> None:
+    """Record that we prompted, for cooldown and dedup."""
+    RESOLUTION_DIR.mkdir(parents=True, exist_ok=True)
+    cooldown_file = RESOLUTION_DIR / f"cooldown-{session_key}"
+    dedup_file = RESOLUTION_DIR / f"dedup-{session_key}-{msg_hash}"
+    try:
+        cooldown_file.write_text(str(time.time()), encoding="utf-8")
+        dedup_file.write_text("1", encoding="utf-8")
+    except OSError:
+        pass
+
+
 def main() -> None:
-    # Read stdin
     try:
         raw = sys.stdin.read()
         data = json.loads(raw) if raw.strip() else {}
     except (json.JSONDecodeError, OSError):
         data = {}
 
-    # LOOP PREVENTION 1: stop_hook_active guard
+    # Loop guard — never fire twice in a row
     if data.get("stop_hook_active", False):
         return
 
-    # LOOP PREVENTION 2: session flag file guard
     session_key = get_session_key(data)
-    flag_file = FLAG_DIR / f"commontrace-prompted-{session_key}"
-    if flag_file.exists():
+    assistant_msg = data.get("last_assistant_message", "")
+    if not assistant_msg:
         return
 
-    # Check for task completion signals
-    last_message = data.get("last_assistant_message", "")
-    if not last_message or not has_completion_signal(last_message):
+    # Cooldown — don't spam
+    if was_recently_prompted(session_key):
         return
 
-    # Write flag file to prevent re-prompting this session
-    try:
-        import time
-        flag_file.write_text(str(time.time()), encoding="utf-8")
-    except OSError:
-        # If we can't write the flag, skip prompting to avoid repeated prompts
+    # Dedup — don't prompt for the same fix twice
+    msg_hash = topic_hash(assistant_msg)
+    if was_already_prompted_for(session_key, msg_hash):
         return
 
-    # Output contribution prompt
+    # Read recent user messages from transcript
+    transcript_path = data.get("transcript_path", "")
+    user_messages = read_last_user_messages(transcript_path) if transcript_path else []
+
+    # Detect resolution
+    if not has_resolution_signal(assistant_msg, user_messages):
+        return
+
+    # Mark as prompted (cooldown + dedup)
+    mark_prompted(session_key, msg_hash)
+
     output = {
         "decision": "block",
         "reason": (
-            "Before we wrap up: if you just solved a problem that other agents might face, "
-            "consider sharing it with the CommonTrace knowledge base. "
-            "Use /trace:contribute to start the contribution flow, or just say 'skip' to finish."
+            "It looks like you just solved a problem. "
+            "Would you like to contribute this solution to the CommonTrace knowledge base "
+            "so other AI agents can learn from it? "
+            "Use the contribute_trace tool to submit it, or say 'skip' to continue."
         ),
     }
     print(json.dumps(output))
@@ -116,5 +204,4 @@ if __name__ == "__main__":
     try:
         main()
     except Exception:
-        # Never prevent Claude from stopping — silently exit 0
         pass
