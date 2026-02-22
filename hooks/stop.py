@@ -1,53 +1,43 @@
 #!/usr/bin/env python3
 """
-CommonTrace Stop hook — contribution prompt on resolution.
+CommonTrace Stop hook — Layer 2 pattern recognition.
 
-Fires every time Claude finishes a response. Detects when a problem was
-resolved (user confirmation or Claude self-proof) and prompts to contribute.
+Reads accumulated state from Layer 1 hooks and detects knowledge
+creation patterns. No keyword matching on human messages. No NLU.
 
-Allows multiple contributions per session, but:
-  - Never fires twice in a row (stop_hook_active guard)
-  - Cooldown: won't re-prompt within 60 seconds of the last prompt
-  - Dedup: won't prompt for the same resolution twice (topic hash)
+The state files are STRUCTURAL signals written by other hooks:
+  errors.jsonl      — Bash errors, tool failures (timestamps, hashes)
+  resolutions.jsonl — successful Bash runs after errors
+  changes.jsonl     — files modified (paths, config flag)
+  research.jsonl    — WebSearch/WebFetch activity
+  contributions.jsonl — traces already contributed this session
+  user_turn_count   — how many real user messages
+  user_turns_at_contribution — turn count when last trace was contributed
 
-Reads the last few transcript messages to detect user satisfaction signals.
+Detected patterns (all structural):
+  Error Resolution:    errors + changes + resolutions
+  Workaround:          errors + research + changes
+  Config Discovery:    config file changed + errors existed
+  Deep Iteration:      same file changed multiple times
+  Post-Contribution:   contribution + more user turns after
+
+Guards: stop_hook_active, topic-hash dedup (no time cooldown — dedup
+is sufficient, and a cooldown would block legitimate new patterns).
 """
 
 import hashlib
 import json
 import os
 import sys
-import time
+from collections import Counter
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+from session_state import get_state_dir, read_events, read_counter
 
 
 RESOLUTION_DIR = Path("/tmp/commontrace-resolutions")
-
-# Claude's own signals that a problem was solved
-ASSISTANT_SIGNALS = [
-    "fixed", "solved", "resolved", "working now", "works now",
-    "that fixes", "that resolves", "issue is resolved",
-    "tests pass", "all tests pass", "build succeeds",
-    "successfully", "the fix was", "root cause was",
-    "the problem was", "the issue was",
-]
-
-# User satisfaction signals (checked from transcript)
-USER_CONFIRMATION = [
-    "that works", "it works", "works now", "nice", "perfect",
-    "thanks", "thank you", "great", "awesome", "good job",
-    "exactly", "yes", "yep", "correct", "that's it",
-    "fixed", "solved", "finally",
-]
-
-# Skip signals — user is still unhappy
-USER_REJECTION = [
-    "no", "wrong", "not working", "still broken", "nope",
-    "that's not", "doesn't work", "didn't work", "try again",
-    "still failing", "same error", "not right",
-]
-
-COOLDOWN_SECONDS = 60
+MIN_TURNS = 3
 
 
 def get_session_key(data: dict) -> str:
@@ -55,101 +45,151 @@ def get_session_key(data: dict) -> str:
     return str(session_id) if session_id else str(os.getppid())
 
 
-def read_last_user_messages(transcript_path: str, count: int = 3) -> list[str]:
-    """Read the last N user messages from the transcript JSONL file."""
-    messages = []
-    try:
-        path = Path(transcript_path)
-        if not path.exists():
-            return []
-        lines = path.read_text(encoding="utf-8").strip().split("\n")
-        for line in reversed(lines):
-            if not line.strip():
-                continue
-            try:
-                entry = json.loads(line)
-                if entry.get("role") == "user":
-                    content = entry.get("content", "")
-                    if isinstance(content, list):
-                        # Extract text from content blocks
-                        for block in content:
-                            if isinstance(block, dict) and block.get("type") == "text":
-                                messages.append(block["text"])
-                    elif isinstance(content, str):
-                        messages.append(content)
-                    if len(messages) >= count:
-                        break
-            except json.JSONDecodeError:
-                continue
-    except OSError:
-        pass
-    return messages
-
-
-def has_resolution_signal(assistant_msg: str, user_messages: list[str]) -> bool:
-    """Detect if a problem was just resolved."""
-    lowered_assistant = assistant_msg.lower()
-
-    # Check if user rejected (takes priority)
-    for msg in user_messages[:1]:  # Only check most recent user message
-        lowered = msg.lower()
-        for pattern in USER_REJECTION:
-            if pattern in lowered:
-                return False
-
-    # Check user confirmation
-    for msg in user_messages[:2]:  # Check last 2 user messages
-        lowered = msg.lower()
-        for pattern in USER_CONFIRMATION:
-            if pattern in lowered:
-                return True
-
-    # Check Claude's own completion signals
-    words = set(lowered_assistant.split())
-    for signal in ASSISTANT_SIGNALS:
-        if " " in signal:
-            if signal in lowered_assistant:
-                return True
-        elif signal in words:
-            return True
-
-    return False
-
-
 def topic_hash(message: str) -> str:
-    """Hash the first 200 chars of Claude's message for dedup."""
     return hashlib.md5(message[:200].encode()).hexdigest()[:12]
 
 
-def was_recently_prompted(session_key: str) -> bool:
-    """Check cooldown — don't prompt within COOLDOWN_SECONDS of last prompt."""
-    cooldown_file = RESOLUTION_DIR / f"cooldown-{session_key}"
-    if cooldown_file.exists():
-        try:
-            last_time = float(cooldown_file.read_text(encoding="utf-8"))
-            if time.time() - last_time < COOLDOWN_SECONDS:
-                return True
-        except (ValueError, OSError):
-            pass
-    return False
-
-
 def was_already_prompted_for(session_key: str, msg_hash: str) -> bool:
-    """Check if we already prompted for this exact resolution."""
-    dedup_file = RESOLUTION_DIR / f"dedup-{session_key}-{msg_hash}"
-    return dedup_file.exists()
+    return (RESOLUTION_DIR / f"dedup-{session_key}-{msg_hash}").exists()
 
 
 def mark_prompted(session_key: str, msg_hash: str) -> None:
-    """Record that we prompted, for cooldown and dedup."""
     RESOLUTION_DIR.mkdir(parents=True, exist_ok=True)
-    cooldown_file = RESOLUTION_DIR / f"cooldown-{session_key}"
-    dedup_file = RESOLUTION_DIR / f"dedup-{session_key}-{msg_hash}"
     try:
-        cooldown_file.write_text(str(time.time()), encoding="utf-8")
-        dedup_file.write_text("1", encoding="utf-8")
+        (RESOLUTION_DIR / f"dedup-{session_key}-{msg_hash}").write_text(
+            "1", encoding="utf-8")
     except OSError:
         pass
+
+
+def detect_patterns(state_dir: Path) -> dict:
+    """Read all Layer 1 state and detect structural patterns.
+
+    Returns dict with pattern names and their evidence.
+    """
+    errors = read_events(state_dir, "errors.jsonl")
+    resolutions = read_events(state_dir, "resolutions.jsonl")
+    changes = read_events(state_dir, "changes.jsonl")
+    research = read_events(state_dir, "research.jsonl")
+    contributions = read_events(state_dir, "contributions.jsonl")
+    user_turns = read_counter(state_dir, "user_turn_count")
+
+    # Turns at last contribution (to detect post-contribution messages)
+    turns_at_contribution = 0
+    try:
+        path = state_dir / "user_turns_at_contribution"
+        if path.exists():
+            turns_at_contribution = int(
+                path.read_text(encoding="utf-8").strip())
+    except (ValueError, OSError):
+        pass
+
+    # Config changes
+    config_changes = [c for c in changes if c.get("is_config")]
+
+    # File edit frequency (same file changed multiple times = iteration)
+    file_counts = Counter(c.get("file", "") for c in changes)
+    iterated_files = {f for f, count in file_counts.items() if count >= 2}
+
+    patterns = {}
+
+    # ── Error Resolution: errors + code changes + verification ──
+    if errors and changes and resolutions:
+        # Check temporal order: error before change before resolution
+        first_error_t = min(e.get("t", 0) for e in errors)
+        last_change_t = max(c.get("t", 0) for c in changes)
+        last_resolution_t = max(r.get("t", 0) for r in resolutions)
+
+        if first_error_t < last_change_t <= last_resolution_t:
+            patterns["error_resolution"] = {
+                "errors": len(errors),
+                "changes": len(changes),
+                "resolutions": len(resolutions),
+            }
+
+    # ── Workaround: errors + research + changes + VERIFICATION ──
+    # Research alone doesn't mean the fix works. Require either a
+    # resolution (Bash succeeded) or that the conversation progressed
+    # without new errors after the last change.
+    if errors and research and changes:
+        last_change_t = max(c.get("t", 0) for c in changes)
+        verified = False
+
+        # Explicit verification: resolution exists after changes
+        if resolutions:
+            last_resolution_t = max(r.get("t", 0) for r in resolutions)
+            if last_resolution_t >= last_change_t:
+                verified = True
+
+        # Implicit verification: no new errors after last change
+        # AND conversation continued (user didn't just disappear)
+        if not verified:
+            errors_after_change = [
+                e for e in errors if e.get("t", 0) > last_change_t
+            ]
+            if not errors_after_change and user_turns >= MIN_TURNS:
+                verified = True
+
+        if verified:
+            patterns["workaround"] = {
+                "errors": len(errors),
+                "research_queries": len(research),
+                "changes": len(changes),
+                "verified_by": "resolution" if resolutions else "no_new_errors",
+            }
+
+    # ── Config Discovery: config change + errors + VERIFICATION ──
+    # Same principle: changing a config doesn't mean it fixed anything.
+    if config_changes and errors:
+        first_error_t = min(e.get("t", 0) for e in errors)
+        config_after_error = [
+            c for c in config_changes if c.get("t", 0) > first_error_t
+        ]
+        if config_after_error:
+            last_config_t = max(c.get("t", 0) for c in config_after_error)
+            verified = False
+
+            if resolutions:
+                last_resolution_t = max(r.get("t", 0) for r in resolutions)
+                if last_resolution_t >= last_config_t:
+                    verified = True
+
+            if not verified:
+                errors_after_config = [
+                    e for e in errors if e.get("t", 0) > last_config_t
+                ]
+                if not errors_after_config and user_turns >= MIN_TURNS:
+                    verified = True
+
+            if verified:
+                patterns["config_discovery"] = {
+                    "config_files": [c.get("file") for c in config_after_error],
+                    "errors": len(errors),
+                }
+
+    # ── Deep Iteration: same file edited multiple times ──
+    if iterated_files and user_turns >= 2:
+        patterns["iteration"] = {
+            "iterated_files": list(iterated_files),
+            "max_edits": max(file_counts.values()),
+        }
+
+    # ── Multi-turn with changes (catch-all for substantial work) ──
+    if user_turns >= MIN_TURNS and changes:
+        patterns["multi_turn_work"] = {
+            "user_turns": user_turns,
+            "changes": len(changes),
+        }
+
+    # ── Post-contribution refinement ──
+    if contributions and user_turns > turns_at_contribution:
+        latest_contribution = contributions[-1]
+        patterns["post_contribution"] = {
+            "trace_id": latest_contribution.get("trace_id", ""),
+            "turns_since": user_turns - turns_at_contribution,
+        }
+
+    return patterns
 
 
 def main() -> None:
@@ -159,7 +199,6 @@ def main() -> None:
     except (json.JSONDecodeError, OSError):
         data = {}
 
-    # Loop guard — never fire twice in a row
     if data.get("stop_hook_active", False):
         return
 
@@ -168,36 +207,110 @@ def main() -> None:
     if not assistant_msg:
         return
 
-    # Cooldown — don't spam
-    if was_recently_prompted(session_key):
-        return
-
-    # Dedup — don't prompt for the same fix twice
     msg_hash = topic_hash(assistant_msg)
     if was_already_prompted_for(session_key, msg_hash):
         return
 
-    # Read recent user messages from transcript
-    transcript_path = data.get("transcript_path", "")
-    user_messages = read_last_user_messages(transcript_path) if transcript_path else []
+    state_dir = get_state_dir(data)
+    patterns = detect_patterns(state_dir)
 
-    # Detect resolution
-    if not has_resolution_signal(assistant_msg, user_messages):
+    if not patterns:
         return
 
-    # Mark as prompted (cooldown + dedup)
-    mark_prompted(session_key, msg_hash)
+    # ── Post-contribution refinement takes priority ──
+    if "post_contribution" in patterns:
+        trace_id = patterns["post_contribution"].get("trace_id", "")
+        mark_prompted(session_key, msg_hash)
+        print(json.dumps({
+            "decision": "block",
+            "reason": (
+                "You contributed a trace earlier in this session and the "
+                "conversation has continued since then. The trace may "
+                "benefit from the additional context. Use amend_trace "
+                f"to update it{f' (ID: {trace_id})' if trace_id else ''}, "
+                "or say 'skip' to continue."
+            ),
+        }))
+        return
 
-    output = {
-        "decision": "block",
-        "reason": (
-            "It looks like you just solved a problem. "
-            "Would you like to contribute this solution to the CommonTrace knowledge base "
-            "so other AI agents can learn from it? "
-            "Use the contribute_trace tool to submit it, or say 'skip' to continue."
-        ),
-    }
-    print(json.dumps(output))
+    # ── Error resolution is highest-confidence pattern ──
+    if "error_resolution" in patterns:
+        p = patterns["error_resolution"]
+        mark_prompted(session_key, msg_hash)
+        print(json.dumps({
+            "decision": "block",
+            "reason": (
+                f"You went through an error→fix→verify cycle "
+                f"({p['errors']} error(s), {p['changes']} change(s), "
+                f"{p['resolutions']} verification(s)). This looks like "
+                f"a solved problem. Would you like to contribute this "
+                f"solution to CommonTrace? Use contribute_trace to "
+                f"submit, or say 'skip'."
+            ),
+        }))
+        return
+
+    # ── Workaround (error + research + fix) ──
+    if "workaround" in patterns:
+        p = patterns["workaround"]
+        mark_prompted(session_key, msg_hash)
+        print(json.dumps({
+            "decision": "block",
+            "reason": (
+                f"You researched a problem ({p['research_queries']} "
+                f"search(es)) and made changes to fix it. Workarounds "
+                f"found through research are especially valuable. "
+                f"Would you like to contribute to CommonTrace? Use "
+                f"contribute_trace to submit, or say 'skip'."
+            ),
+        }))
+        return
+
+    # ── Config discovery ──
+    if "config_discovery" in patterns:
+        files = patterns["config_discovery"]["config_files"]
+        mark_prompted(session_key, msg_hash)
+        print(json.dumps({
+            "decision": "block",
+            "reason": (
+                f"You modified configuration file(s) "
+                f"({', '.join(Path(f).name for f in files[:3])}) "
+                f"while debugging errors. Configuration discoveries "
+                f"are hard-won knowledge. Would you like to contribute "
+                f"to CommonTrace? Use contribute_trace, or say 'skip'."
+            ),
+        }))
+        return
+
+    # ── Iteration (same file edited repeatedly) ──
+    if "iteration" in patterns:
+        p = patterns["iteration"]
+        mark_prompted(session_key, msg_hash)
+        print(json.dumps({
+            "decision": "block",
+            "reason": (
+                f"You iterated on "
+                f"{', '.join(Path(f).name for f in p['iterated_files'][:3])} "
+                f"(edited {p['max_edits']}+ times). If you solved "
+                f"something through iteration, consider contributing "
+                f"to CommonTrace. Use contribute_trace, or say 'skip'."
+            ),
+        }))
+        return
+
+    # ── Multi-turn catch-all ──
+    if "multi_turn_work" in patterns:
+        mark_prompted(session_key, msg_hash)
+        print(json.dumps({
+            "decision": "block",
+            "reason": (
+                "This has been a multi-turn session with code changes. "
+                "If you solved a problem, found a workaround, or learned "
+                "something useful, consider contributing to CommonTrace. "
+                "Use contribute_trace to submit, or say 'skip'."
+            ),
+        }))
+        return
 
 
 if __name__ == "__main__":

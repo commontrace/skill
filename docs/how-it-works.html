@@ -1,0 +1,878 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CommonTrace — How the Knowledge Detection System Works</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg: #fafafa;
+    --surface: #fff;
+    --text: #1a1a2e;
+    --text-secondary: #555;
+    --border: #e0e0e0;
+    --accent: #2563eb;
+    --accent-light: #eff6ff;
+    --green: #16a34a;
+    --green-light: #f0fdf4;
+    --orange: #ea580c;
+    --orange-light: #fff7ed;
+    --purple: #7c3aed;
+    --purple-light: #f5f3ff;
+    --red: #dc2626;
+    --red-light: #fef2f2;
+    --code-bg: #1e1e2e;
+    --code-text: #cdd6f4;
+  }
+
+  body {
+    font-family: 'IBM Plex Sans', -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    font-size: 16px;
+  }
+
+  .container {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 40px 24px 80px;
+  }
+
+  /* ── Header ────────────────────────────── */
+  header {
+    text-align: center;
+    padding: 60px 0 48px;
+    border-bottom: 2px solid var(--border);
+    margin-bottom: 48px;
+  }
+  header h1 {
+    font-size: 2.2rem;
+    font-weight: 700;
+    margin-bottom: 12px;
+    letter-spacing: -0.02em;
+  }
+  header p {
+    font-size: 1.1rem;
+    color: var(--text-secondary);
+    max-width: 600px;
+    margin: 0 auto;
+  }
+  .version-badge {
+    display: inline-block;
+    background: var(--accent-light);
+    color: var(--accent);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.8rem;
+    font-weight: 500;
+    padding: 3px 10px;
+    border-radius: 20px;
+    margin-bottom: 16px;
+  }
+
+  /* ── Conversation ──────────────────────── */
+  .conversation {
+    margin: 40px 0;
+  }
+  .msg {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 28px;
+    align-items: flex-start;
+  }
+  .msg.human { flex-direction: row; }
+  .msg.claude { flex-direction: row; }
+
+  .avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 0.75rem;
+    font-family: 'IBM Plex Mono', monospace;
+    margin-top: 2px;
+  }
+  .msg.human .avatar {
+    background: var(--accent);
+    color: #fff;
+  }
+  .msg.claude .avatar {
+    background: var(--purple);
+    color: #fff;
+  }
+
+  .bubble {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 20px;
+    max-width: 90%;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  }
+  .msg.human .bubble {
+    background: var(--accent-light);
+    border-color: #bfdbfe;
+  }
+  .bubble p { margin-bottom: 12px; }
+  .bubble p:last-child { margin-bottom: 0; }
+  .bubble strong { font-weight: 600; }
+  .bubble code {
+    font-family: 'IBM Plex Mono', monospace;
+    background: rgba(0,0,0,0.06);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.88em;
+  }
+
+  /* ── Section headers ───────────────────── */
+  .section-label {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 56px 0 24px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-secondary);
+  }
+  .section-label::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+  .section-label .num {
+    background: var(--text);
+    color: #fff;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.7rem;
+    font-family: 'IBM Plex Mono', monospace;
+  }
+
+  /* ── Diagrams ──────────────────────────── */
+  .diagram {
+    background: var(--code-bg);
+    color: var(--code-text);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.82rem;
+    line-height: 1.6;
+    padding: 24px;
+    border-radius: 10px;
+    overflow-x: auto;
+    margin: 20px 0;
+    white-space: pre;
+  }
+  .diagram .highlight { color: #89b4fa; }
+  .diagram .green { color: #a6e3a1; }
+  .diagram .orange { color: #fab387; }
+  .diagram .red { color: #f38ba8; }
+  .diagram .purple { color: #cba6f7; }
+  .diagram .dim { color: #6c7086; }
+  .diagram .yellow { color: #f9e2af; }
+
+  /* ── Example scenarios ─────────────────── */
+  .scenario {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    margin: 20px 0;
+  }
+  .scenario-header {
+    padding: 12px 20px;
+    font-weight: 600;
+    font-size: 0.9rem;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .scenario-header .icon { font-size: 1.1rem; }
+  .scenario.error .scenario-header { background: var(--red-light); color: var(--red); border-bottom: 1px solid #fecdd3; }
+  .scenario.success .scenario-header { background: var(--green-light); color: var(--green); border-bottom: 1px solid #bbf7d0; }
+  .scenario.research .scenario-header { background: var(--orange-light); color: var(--orange); border-bottom: 1px solid #fed7aa; }
+  .scenario.config .scenario-header { background: var(--purple-light); color: var(--purple); border-bottom: 1px solid #ddd6fe; }
+  .scenario-body {
+    padding: 16px 20px;
+    font-size: 0.92rem;
+  }
+  .scenario-body .step {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 10px;
+    align-items: flex-start;
+  }
+  .scenario-body .step:last-child { margin-bottom: 0; }
+  .scenario-body .step-num {
+    background: var(--border);
+    color: var(--text-secondary);
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.7rem;
+    font-weight: 600;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+
+  /* ── Table ─────────────────────────────── */
+  .state-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 20px 0;
+    font-size: 0.9rem;
+  }
+  .state-table th {
+    text-align: left;
+    padding: 10px 14px;
+    background: var(--bg);
+    border-bottom: 2px solid var(--border);
+    font-weight: 600;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-secondary);
+  }
+  .state-table td {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  .state-table code {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.85em;
+    background: rgba(0,0,0,0.05);
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+  .state-table tr:last-child td { border-bottom: none; }
+
+  /* ── Callout ───────────────────────────── */
+  .callout {
+    border-left: 3px solid;
+    padding: 14px 18px;
+    margin: 20px 0;
+    border-radius: 0 8px 8px 0;
+    font-size: 0.92rem;
+  }
+  .callout.principle { border-color: var(--accent); background: var(--accent-light); }
+  .callout.warning { border-color: var(--orange); background: var(--orange-light); }
+  .callout.key { border-color: var(--green); background: var(--green-light); }
+
+  /* ── Flow arrows ───────────────────────── */
+  .flow {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    margin: 16px 0;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.85rem;
+  }
+  .flow .node {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 6px 12px;
+    border-radius: 6px;
+  }
+  .flow .arrow { color: var(--text-secondary); }
+  .flow .state-node {
+    background: var(--green-light);
+    border-color: #bbf7d0;
+    color: var(--green);
+    font-weight: 500;
+  }
+
+  /* ── Footer ────────────────────────────── */
+  footer {
+    margin-top: 64px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+<header>
+  <div class="version-badge">skill v0.2.0</div>
+  <h1>How CommonTrace Detects Knowledge</h1>
+  <p>A walkthrough of the three-layer hook system that watches a coding session and knows when to ask "should we save this?"</p>
+</header>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<div class="section-label"><span class="num">1</span> The Problem</div>
+
+<div class="conversation">
+  <div class="msg human">
+    <div class="avatar">You</div>
+    <div class="bubble">
+      <p>How does CommonTrace know when I've solved a problem worth saving? I don't want it bugging me after every <code>git status</code>.</p>
+    </div>
+  </div>
+
+  <div class="msg claude">
+    <div class="avatar">CT</div>
+    <div class="bubble">
+      <p>The system has <strong>three layers</strong>. Think of it like this:</p>
+      <p><strong>Layer 1</strong> is a bunch of tiny recorders. Every time Claude uses a tool &mdash; runs a Bash command, edits a file, searches the web &mdash; a hook script writes one line to a state file. Just facts: "file X was edited", "Bash exited with code 1", "user sent their 4th message". No interpretation.</p>
+      <p><strong>Layer 2</strong> is the pattern detector. Every time Claude finishes a response, the Stop hook reads all those state files and looks for structural patterns: "there were errors, then code changes, then a successful run" &mdash; that's an error resolution cycle.</p>
+      <p><strong>Layer 3</strong> is you and Claude. The hook just fires a prompt. Claude decides if the solution is actually worth contributing, and you confirm or say "skip".</p>
+    </div>
+  </div>
+</div>
+
+<div class="diagram"><span class="dim">Layer 1 (State Writers)</span>                 <span class="dim">Layer 2 (Patterns)</span>           <span class="dim">Layer 3 (Decision)</span>
+
+<span class="highlight">PostToolUse</span> (Bash)    ──┐
+<span class="highlight">PostToolUse</span> (Write)   ──┤
+<span class="highlight">PostToolUse</span> (Edit)    ──┤                         ┌──────────────┐
+<span class="highlight">PostToolUse</span> (Notebook) ─┤── <span class="orange">State Files</span> ──────────▶│  <span class="purple">Stop Hook</span>    │──▶ <span class="green">Claude + User</span>
+<span class="highlight">PostToolUseFailure</span>    ──┤   <span class="dim">(JSONL, append)</span>       │  <span class="dim">reads state</span>  │    <span class="dim">decide what</span>
+<span class="highlight">UserPromptSubmit</span>      ──┘                         │  <span class="dim">finds patterns</span>│    <span class="dim">to contribute</span>
+                                                    └──────────────┘</div>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<div class="section-label"><span class="num">2</span> Layer 1 &mdash; The Recorders</div>
+
+<div class="conversation">
+  <div class="msg human">
+    <div class="avatar">You</div>
+    <div class="bubble">
+      <p>What exactly gets recorded? And where?</p>
+    </div>
+  </div>
+
+  <div class="msg claude">
+    <div class="avatar">CT</div>
+    <div class="bubble">
+      <p>Everything goes into <code>/tmp/commontrace-sessions/{session_id}/</code>. Each session gets its own directory. Inside, there are JSONL files &mdash; one JSON object per line, append-only. Here's what each hook writes:</p>
+    </div>
+  </div>
+</div>
+
+<table class="state-table">
+  <thead>
+    <tr>
+      <th>Hook</th>
+      <th>Triggers on</th>
+      <th>Writes to</th>
+      <th>What it records</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>post_tool_use.py</code></td>
+      <td>Bash (error)</td>
+      <td><code>errors.jsonl</code></td>
+      <td>Command, output tail, timestamp</td>
+    </tr>
+    <tr>
+      <td><code>post_tool_use.py</code></td>
+      <td>Bash (success after errors)</td>
+      <td><code>resolutions.jsonl</code></td>
+      <td>Command, output preview, error count before</td>
+    </tr>
+    <tr>
+      <td><code>post_tool_use.py</code></td>
+      <td>Write / Edit / NotebookEdit</td>
+      <td><code>changes.jsonl</code></td>
+      <td>File path, tool name, is_config flag</td>
+    </tr>
+    <tr>
+      <td><code>post_tool_use.py</code></td>
+      <td>WebSearch / WebFetch</td>
+      <td><code>research.jsonl</code></td>
+      <td>Tool name, query or URL</td>
+    </tr>
+    <tr>
+      <td><code>post_tool_use.py</code></td>
+      <td>MCP contribute_trace</td>
+      <td><code>contributions.jsonl</code></td>
+      <td>Trace ID (UUID)</td>
+    </tr>
+    <tr>
+      <td><code>post_tool_failure.py</code></td>
+      <td>Any tool failure</td>
+      <td><code>errors.jsonl</code></td>
+      <td>Tool name, error message, input summary</td>
+    </tr>
+    <tr>
+      <td><code>user_prompt.py</code></td>
+      <td>Every user message</td>
+      <td><code>user_turn_count</code></td>
+      <td>Increments counter (plain integer)</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="conversation">
+  <div class="msg human">
+    <div class="avatar">You</div>
+    <div class="bubble">
+      <p>How does it know a Bash command failed? Does it look for "Error:" in the output?</p>
+    </div>
+  </div>
+
+  <div class="msg claude">
+    <div class="avatar">CT</div>
+    <div class="bubble">
+      <p><strong>No keyword matching.</strong> That was an explicit design decision. Hardcoded error keyword lists are brittle &mdash; they miss errors not in the list and false-positive on things like <code>grep</code> returning exit code 1.</p>
+      <p>Instead, error detection is purely structural:</p>
+      <p><strong>1.</strong> Check <code>tool_response.exitCode</code> &mdash; non-zero means error. This is OS-level metadata, not text parsing.</p>
+      <p><strong>2.</strong> If no exit code field, check if <code>stderr</code> has content. Unix convention: stderr is for errors.</p>
+      <p><strong>3.</strong> If the response is a plain string, look for <code>exit code: N</code> at the end &mdash; this is metadata appended by Claude Code, not error message parsing.</p>
+      <p>If none of these fire, it's treated as success. We'd rather miss an error than false-positive on normal output.</p>
+    </div>
+  </div>
+</div>
+
+<div class="diagram"><span class="dim">detect_bash_error(data)</span>
+
+<span class="highlight">tool_response</span> is dict?
+  ├─ <span class="green">exitCode != 0</span>  ──▶  <span class="red">ERROR</span>  (use stderr or output tail)
+  ├─ <span class="green">stderr non-empty</span> ──▶  <span class="red">ERROR</span>  (use stderr)
+  └─ neither          ──▶  <span class="green">SUCCESS</span>
+
+<span class="highlight">tool_response</span> is string?
+  ├─ <span class="green">ends with "exit code: N" where N≠0</span>  ──▶  <span class="red">ERROR</span>
+  └─ no exit code pattern               ──▶  <span class="green">SUCCESS</span>
+
+<span class="dim">No keyword lists. No "Error:", "Failed", "Exception" matching.</span>
+<span class="dim">Just exit codes and stderr — structural OS-level signals.</span></div>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<div class="section-label"><span class="num">3</span> Layer 2 &mdash; Pattern Detection</div>
+
+<div class="conversation">
+  <div class="msg human">
+    <div class="avatar">You</div>
+    <div class="bubble">
+      <p>OK so Layer 1 just writes facts. How does the Stop hook turn those facts into "you should contribute"?</p>
+    </div>
+  </div>
+
+  <div class="msg claude">
+    <div class="avatar">CT</div>
+    <div class="bubble">
+      <p>The Stop hook fires every time Claude finishes a response. It reads all the state files and checks for <strong>five structural patterns</strong>, in priority order. Each pattern is just a combination of state signals &mdash; no content analysis on anyone's messages.</p>
+    </div>
+  </div>
+</div>
+
+<!-- Pattern 1 -->
+<div class="scenario error">
+  <div class="scenario-header">
+    <span class="icon">&#x2716;</span> Pattern 1: Error Resolution <em>(highest confidence)</em>
+  </div>
+  <div class="scenario-body">
+    <p style="margin-bottom: 12px"><strong>Signals required:</strong> <code>errors.jsonl</code> has entries AND <code>changes.jsonl</code> has entries AND <code>resolutions.jsonl</code> has entries, AND they happened in temporal order (error &rarr; change &rarr; resolution).</p>
+    <div class="step"><span class="step-num">1</span><span>Bash command fails (exit code 1) &rarr; recorded in <code>errors.jsonl</code></span></div>
+    <div class="step"><span class="step-num">2</span><span>Claude edits a file to fix it &rarr; recorded in <code>changes.jsonl</code></span></div>
+    <div class="step"><span class="step-num">3</span><span>Bash command succeeds &rarr; recorded in <code>resolutions.jsonl</code></span></div>
+    <div class="step"><span class="step-num">4</span><span>Stop hook fires &rarr; sees error &lt; change &lt; resolution &rarr; <strong>prompts</strong></span></div>
+  </div>
+</div>
+
+<!-- Pattern 2 -->
+<div class="scenario research">
+  <div class="scenario-header">
+    <span class="icon">&#x1F50D;</span> Pattern 2: Workaround <em>(requires verification)</em>
+  </div>
+  <div class="scenario-body">
+    <p style="margin-bottom: 12px"><strong>Signals required:</strong> <code>errors.jsonl</code> + <code>research.jsonl</code> + <code>changes.jsonl</code> + <strong>verification</strong> (resolution exists OR no new errors after changes + 3 user turns).</p>
+    <div class="step"><span class="step-num">1</span><span>Something breaks &rarr; <code>errors.jsonl</code></span></div>
+    <div class="step"><span class="step-num">2</span><span>Claude searches the web for a solution &rarr; <code>research.jsonl</code></span></div>
+    <div class="step"><span class="step-num">3</span><span>Claude applies a fix from the research &rarr; <code>changes.jsonl</code></span></div>
+    <div class="step"><span class="step-num">4</span><span><strong>Verification:</strong> Bash succeeds &rarr; <code>resolutions.jsonl</code>, OR conversation continues without new errors</span></div>
+    <div class="step"><span class="step-num">5</span><span>Stop hook: errors + research + changes + verification = <strong>workaround confirmed</strong></span></div>
+  </div>
+</div>
+
+<div class="callout warning">
+  <strong>Why verification matters:</strong> Researching and applying a fix doesn't mean it works. Without verification, we'd prompt for contribution on a fix that might need amending 5 minutes later. We either need a successful test run (resolution) or enough conversation without new errors to be confident.
+</div>
+
+<!-- Pattern 3 -->
+<div class="scenario config">
+  <div class="scenario-header">
+    <span class="icon">&#x2699;</span> Pattern 3: Config Discovery <em>(requires verification)</em>
+  </div>
+  <div class="scenario-body">
+    <p style="margin-bottom: 12px"><strong>Signals required:</strong> Config file changed AFTER errors + <strong>verification</strong> (resolution exists OR no new errors + 3 user turns).</p>
+    <div class="step"><span class="step-num">1</span><span>Errors happen &rarr; <code>errors.jsonl</code></span></div>
+    <div class="step"><span class="step-num">2</span><span>Claude edits <code>tsconfig.json</code> or <code>nginx.conf</code> &rarr; <code>changes.jsonl</code> with <code>is_config: true</code></span></div>
+    <div class="step"><span class="step-num">3</span><span><strong>Verification:</strong> Bash succeeds or conversation continues without new errors</span></div>
+    <div class="step"><span class="step-num">4</span><span>Stop hook: config change after error + verification = <strong>configuration fix confirmed</strong></span></div>
+  </div>
+</div>
+
+<div class="conversation">
+  <div class="msg human">
+    <div class="avatar">You</div>
+    <div class="bubble">
+      <p>How does it know what a "config file" is?</p>
+    </div>
+  </div>
+
+  <div class="msg claude">
+    <div class="avatar">CT</div>
+    <div class="bubble">
+      <p>By file extension and name fragments. <code>session_state.py</code> has an <code>is_config_file()</code> function that checks for extensions like <code>.json</code>, <code>.yaml</code>, <code>.toml</code>, <code>.env</code>, <code>.ini</code>, and name fragments like <code>config</code>, <code>settings</code>, <code>docker</code>, <code>webpack</code>, <code>tsconfig</code>, <code>pyproject</code>, etc. This is structural &mdash; it's reading file paths, not file contents.</p>
+    </div>
+  </div>
+</div>
+
+<!-- Pattern 4 -->
+<div class="scenario success">
+  <div class="scenario-header">
+    <span class="icon">&#x1F504;</span> Pattern 4: Deep Iteration
+  </div>
+  <div class="scenario-body">
+    <p style="margin-bottom: 12px"><strong>Signals required:</strong> Same file edited 2+ times AND at least 2 user turns.</p>
+    <div class="step"><span class="step-num">1</span><span>Claude edits <code>api.py</code> &rarr; <code>changes.jsonl</code></span></div>
+    <div class="step"><span class="step-num">2</span><span>User responds (turn count increases) &rarr; <code>user_turn_count</code></span></div>
+    <div class="step"><span class="step-num">3</span><span>Claude edits <code>api.py</code> again &rarr; <code>changes.jsonl</code> (same file, 2nd entry)</span></div>
+    <div class="step"><span class="step-num">4</span><span>Stop hook: same file, multiple edits = <strong>iterative fix</strong></span></div>
+  </div>
+</div>
+
+<!-- Pattern 5 -->
+<div class="scenario success">
+  <div class="scenario-header">
+    <span class="icon">&#x1F4AC;</span> Pattern 5: Multi-turn Work <em>(catch-all)</em>
+  </div>
+  <div class="scenario-body">
+    <p style="margin-bottom: 12px"><strong>Signals required:</strong> 3+ user messages AND code changes exist.</p>
+    <p>This is the broadest pattern. If you've been going back and forth with Claude for 3+ messages and code was modified, <em>something</em> happened that might be worth saving. The prompt is gentle &mdash; Claude and the user decide.</p>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<div class="section-label"><span class="num">4</span> Post-Contribution Refinement</div>
+
+<div class="conversation">
+  <div class="msg human">
+    <div class="avatar">You</div>
+    <div class="bubble">
+      <p>What if I contribute a trace but then realize it's incomplete? Like I keep talking and discover more context?</p>
+    </div>
+  </div>
+
+  <div class="msg claude">
+    <div class="avatar">CT</div>
+    <div class="bubble">
+      <p>There's a <strong>6th pattern</strong> that takes priority over all others: <strong>post-contribution refinement</strong>.</p>
+      <p>When you call <code>contribute_trace</code>, the hook records the trace ID and snapshots the current user turn count. If you keep talking after that (more user turns than the snapshot), the Stop hook detects this and prompts for <strong>amendment</strong> instead of a new contribution.</p>
+    </div>
+  </div>
+</div>
+
+<div class="scenario config">
+  <div class="scenario-header">
+    <span class="icon">&#x270F;</span> Pattern 6: Post-Contribution Refinement <em>(highest priority)</em>
+  </div>
+  <div class="scenario-body">
+    <div class="step"><span class="step-num">1</span><span>You contribute a trace &rarr; <code>contributions.jsonl</code> gets trace ID, <code>user_turns_at_contribution</code> saves turn count (e.g., 5)</span></div>
+    <div class="step"><span class="step-num">2</span><span>You keep discussing &rarr; <code>user_turn_count</code> goes to 6, 7, 8...</span></div>
+    <div class="step"><span class="step-num">3</span><span>Stop hook: contributions exist AND turns (8) > snapshot (5) = <strong>"Would you like to amend?"</strong></span></div>
+  </div>
+</div>
+
+<div class="callout principle">
+  <strong>Why this matters:</strong> This catches the common failure mode where a trace is submitted, the user pushes back or adds nuance ("but what about X?"), and the improved understanding never makes it back into the trace.
+</div>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<div class="section-label"><span class="num">5</span> Full Example: Debugging a Real Error</div>
+
+<div class="conversation">
+  <div class="msg human">
+    <div class="avatar">You</div>
+    <div class="bubble">
+      <p>Walk me through a complete example. What happens when I'm debugging a real problem?</p>
+    </div>
+  </div>
+
+  <div class="msg claude">
+    <div class="avatar">CT</div>
+    <div class="bubble">
+      <p>Let's say you're setting up a Next.js project and the build fails because of a TypeScript path alias issue. Here's exactly what happens in the hooks:</p>
+    </div>
+  </div>
+</div>
+
+<div class="diagram"><span class="yellow">Session State: /tmp/commontrace-sessions/abc123/</span>
+
+<span class="dim">── Turn 1: User asks Claude to build the project ──</span>
+
+<span class="highlight">[UserPromptSubmit]</span>  user_turn_count: <span class="green">1</span>
+
+<span class="highlight">[PostToolUse Bash]</span>  <span class="dim">$ npm run build</span>
+  exit code: 1 → stderr detected
+  <span class="red">▸ errors.jsonl</span>  {"source":"bash","command":"npm run build",
+                     "output_tail":"...Cannot find module '@/lib/db'...","t":1000}
+
+  <span class="purple">▸ CommonTrace search</span> (query: last 200 chars of stderr)
+    → Found: "Next.js path aliases require baseUrl in tsconfig.json"
+    → Injected as additionalContext to Claude
+
+<span class="dim">── Turn 2: User says "try the fix from that trace" ──</span>
+
+<span class="highlight">[UserPromptSubmit]</span>  user_turn_count: <span class="green">2</span>
+
+<span class="highlight">[PostToolUse Edit]</span>  <span class="dim">tsconfig.json</span>
+  <span class="orange">▸ changes.jsonl</span>  {"tool":"Edit","file":"tsconfig.json",
+                     "is_config":<span class="purple">true</span>,"t":1020}
+
+<span class="dim">── Turn 3: Claude re-runs the build ──</span>
+
+<span class="highlight">[PostToolUse Bash]</span>  <span class="dim">$ npm run build</span>
+  exit code: 0 → success + previous errors exist
+  <span class="green">▸ resolutions.jsonl</span>  {"source":"bash","command":"npm run build",
+                        "errors_before":1,"t":1040}
+
+<span class="highlight">[Stop hook fires]</span>
+  reads errors.jsonl:      <span class="red">1 error</span>  (t=1000)
+  reads changes.jsonl:     <span class="orange">1 change</span> (t=1020, is_config=true)
+  reads resolutions.jsonl: <span class="green">1 resolution</span> (t=1040)
+
+  <span class="dim">Pattern check:</span>
+    error_resolution: 1000 < 1020 ≤ 1040 ✓  <span class="green">MATCH</span>
+    config_discovery: config change after error ✓  <span class="green">MATCH</span>
+
+  <span class="dim">Priority: error_resolution wins (checked first after post-contribution)</span>
+
+  <span class="yellow">▸ Output:</span> "You went through an error→fix→verify cycle
+              (1 error, 1 change, 1 verification).
+              Would you like to contribute?"</div>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<div class="section-label"><span class="num">6</span> Anti-Spam: Guards &amp; Cooldowns</div>
+
+<div class="conversation">
+  <div class="msg human">
+    <div class="avatar">You</div>
+    <div class="bubble">
+      <p>Won't this fire constantly during a long session? Every time Claude edits a file?</p>
+    </div>
+  </div>
+
+  <div class="msg claude">
+    <div class="avatar">CT</div>
+    <div class="bubble">
+      <p>Two guards prevent that:</p>
+      <p><strong>1. Topic dedup:</strong> The first 200 characters of Claude's response are hashed. If the same hash was already prompted for, it's skipped forever. Stored as <code>dedup-{session_key}-{hash}</code>. This means each unique resolution is prompted exactly once.</p>
+      <p><strong>2. Stop hook guard:</strong> The hook data includes <code>stop_hook_active</code>. If true, it means we're already inside a Stop hook prompt &mdash; skip to avoid recursion.</p>
+      <p>There's no time-based cooldown. The dedup is sufficient &mdash; a cooldown would only block legitimate new patterns that happen to occur within a time window.</p>
+      <p>The CommonTrace <em>search</em> (on errors) has its own separate 30-second cooldown to avoid hammering the API during rapid error-fix-error cycles.</p>
+    </div>
+  </div>
+</div>
+
+<div class="diagram"><span class="dim">Stop hook entry →</span>
+
+  stop_hook_active?     ──<span class="red"> YES → return</span>  <span class="dim">(avoid recursion)</span>
+  no assistant message? ──<span class="red"> YES → return</span>
+  same topic hash?      ──<span class="red"> YES → return</span>  <span class="dim">(already prompted for this)</span>
+  no patterns found?    ──<span class="red"> YES → return</span>
+
+  <span class="green">All guards pass → pick highest-priority pattern → output prompt</span>
+  <span class="dim">No time cooldown. Dedup ensures each resolution prompts exactly once.</span></div>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<div class="section-label"><span class="num">7</span> Why No Keyword Matching</div>
+
+<div class="conversation">
+  <div class="msg human">
+    <div class="avatar">You</div>
+    <div class="bubble">
+      <p>Earlier versions had keyword lists like "thanks", "perfect", "still broken" to detect user mood. Why was that removed?</p>
+    </div>
+  </div>
+
+  <div class="msg claude">
+    <div class="avatar">CT</div>
+    <div class="bubble">
+      <p>Because there are infinite ways to express the same thing. A user who's happy might say "finally omg that took forever" &mdash; no keyword list catches that. A user who's frustrated might say "im gonna start to get mad" &mdash; doesn't match "still broken" or "not working".</p>
+      <p>Trying to understand human intent through string matching is building a bad NLU system. The hook is a Python script with a 5-second timeout &mdash; it <em>cannot</em> understand language.</p>
+      <p>What it <em>can</em> do: read structural metadata. Exit codes don't lie. File paths don't lie. Turn counts don't lie. Timestamps don't lie. These signals are deterministic and complete.</p>
+      <p>Claude itself (the LLM) is the one that understands the discussion. The hook just triggers at the right moments. Claude decides if it's worth contributing. The user confirms.</p>
+    </div>
+  </div>
+</div>
+
+<div class="callout key">
+  <strong>The design principle:</strong> Hooks are triggers, not analyzers. They detect WHEN to prompt using reliable structural signals. Claude decides IF and WHAT to contribute. The hook fires broadly &mdash; false positives are cheap (Claude says "skip"), false negatives lose knowledge forever.
+</div>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<div class="section-label"><span class="num">8</span> What's a Trace vs. a Preference</div>
+
+<div class="conversation">
+  <div class="msg human">
+    <div class="avatar">You</div>
+    <div class="bubble">
+      <p>When Claude offers to contribute, how does it know what belongs in CommonTrace vs. what should stay in my local CLAUDE.md?</p>
+    </div>
+  </div>
+
+  <div class="msg claude">
+    <div class="avatar">CT</div>
+    <div class="bubble">
+      <p>The test is <strong>transferability</strong>: would this help an agent working on a completely different codebase?</p>
+      <p><strong>Trace</strong> (goes to CommonTrace): "Use <code>pool_pre_ping=True</code> with SQLAlchemy because connections go stale after idle timeout." &mdash; This helps anyone using SQLAlchemy, anywhere.</p>
+      <p><strong>Trace without reasoning</strong> (still goes to CommonTrace): "Always A/B test email subject lines." &mdash; A marketing expert may not explain why, but it's transferable domain expertise.</p>
+      <p><strong>Preference</strong> (stays in CLAUDE.md): "Use tabs not spaces" or "Name files in kebab-case." &mdash; Project-specific style. No one else benefits.</p>
+    </div>
+  </div>
+
+  <div class="msg human">
+    <div class="avatar">You</div>
+    <div class="bubble">
+      <p>So traces don't need a "because"?</p>
+    </div>
+  </div>
+
+  <div class="msg claude">
+    <div class="avatar">CT</div>
+    <div class="bubble">
+      <p>Correct. The "because" rule is <strong>guidance</strong>, not a gate. Expert knowledge is often shared as convention without justification &mdash; "we always do X" &mdash; and it's still worth recording. The person knows something the agent doesn't, even if they can't articulate why. The hook never filters contributions based on whether causal reasoning was provided.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<div class="section-label"><span class="num">9</span> Auto-Search on Errors</div>
+
+<div class="conversation">
+  <div class="msg human">
+    <div class="avatar">You</div>
+    <div class="bubble">
+      <p>You mentioned CommonTrace also searches automatically when errors happen. How?</p>
+    </div>
+  </div>
+
+  <div class="msg claude">
+    <div class="avatar">CT</div>
+    <div class="bubble">
+      <p>When the Bash handler in <code>post_tool_use.py</code> detects an error (via exit code/stderr), it does two things:</p>
+      <p><strong>1.</strong> Records the error to <code>errors.jsonl</code> (for the Stop hook).</p>
+      <p><strong>2.</strong> Searches CommonTrace with the last 200 characters of the error output. The search engine handles relevance &mdash; the hook doesn't try to extract the "important" error line.</p>
+      <p>If matches are found, they're injected as <code>additionalContext</code> into Claude's next response. Claude sees something like: <em>"CommonTrace found relevant traces for this error: [1] Next.js path aliases require baseUrl... (ID: abc-123)"</em></p>
+      <p>The search has a <strong>30-second cooldown</strong> so rapid error-fix-error cycles don't hammer the API.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<div class="section-label"><span class="num">10</span> The Complete Hook Map</div>
+
+<div class="diagram"><span class="yellow">hooks.json — 6 hook registrations across 5 event types</span>
+
+<span class="highlight">SessionStart</span>
+  └─ <span class="green">session_start.py</span>      <span class="dim">10s timeout</span>
+     Auto-provision API key, detect project context,
+     search CommonTrace for relevant traces
+
+<span class="highlight">PostToolUse</span>
+  ├─ matcher: <span class="orange">Bash</span>         → <span class="green">post_tool_use.py</span>  <span class="dim">5s</span>
+  │  Error detection (exit code/stderr), state recording,
+  │  CommonTrace search on errors, resolution tracking
+  │
+  ├─ matcher: <span class="orange">Write</span>        → <span class="green">post_tool_use.py</span>  <span class="dim">3s</span>
+  ├─ matcher: <span class="orange">Edit</span>         → <span class="green">post_tool_use.py</span>  <span class="dim">3s</span>
+  └─ matcher: <span class="orange">NotebookEdit</span> → <span class="green">post_tool_use.py</span>  <span class="dim">3s</span>
+     File change recording, config file detection
+
+<span class="highlight">PostToolUseFailure</span>         → <span class="green">post_tool_failure.py</span>  <span class="dim">3s</span>
+  Records any tool execution failure to errors.jsonl
+
+<span class="highlight">UserPromptSubmit</span>           → <span class="green">user_prompt.py</span>  <span class="dim">3s</span>
+  Increments user turn counter (pure structural)
+
+<span class="highlight">Stop</span>                       → <span class="green">stop.py</span>  <span class="dim">5s</span>
+  Reads all state, detects patterns, prompts for
+  contribution or amendment</div>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<div class="section-label"><span class="num">11</span> File Inventory</div>
+
+<table class="state-table">
+  <thead>
+    <tr>
+      <th>File</th>
+      <th>Layer</th>
+      <th>Role</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>session_state.py</code></td>
+      <td>Shared</td>
+      <td>State directory management, JSONL read/write, counters, config file detection</td>
+    </tr>
+    <tr>
+      <td><code>session_start.py</code></td>
+      <td>Setup</td>
+      <td>API key provisioning, MCP config, project context detection, initial search</td>
+    </tr>
+    <tr>
+      <td><code>post_tool_use.py</code></td>
+      <td>Layer 1</td>
+      <td>Handles Bash/Write/Edit/WebSearch/contribute_trace &mdash; records state + searches on errors</td>
+    </tr>
+    <tr>
+      <td><code>post_tool_failure.py</code></td>
+      <td>Layer 1</td>
+      <td>Records tool failures to errors.jsonl</td>
+    </tr>
+    <tr>
+      <td><code>user_prompt.py</code></td>
+      <td>Layer 1</td>
+      <td>Increments user turn counter</td>
+    </tr>
+    <tr>
+      <td><code>stop.py</code></td>
+      <td>Layer 2</td>
+      <td>Reads state, detects 6 patterns, prompts contribution/amendment</td>
+    </tr>
+    <tr>
+      <td><code>hooks.json</code></td>
+      <td>Config</td>
+      <td>Registers all hooks with matchers and timeouts</td>
+    </tr>
+    <tr>
+      <td><code>SKILL.md</code></td>
+      <td>Interface</td>
+      <td>MCP tool descriptions, usage guidelines for the agent</td>
+    </tr>
+  </tbody>
+</table>
+
+<footer>
+  CommonTrace &mdash; Shared Knowledge Base for AI Coding Agents<br>
+  <a href="https://commontrace.org" style="color: var(--accent)">commontrace.org</a>
+</footer>
+
+</div>
+</body>
+</html>
