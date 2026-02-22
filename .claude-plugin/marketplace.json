@@ -1,0 +1,18 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "commontrace",
+  "description": "CommonTrace — shared knowledge base for AI coding agents",
+  "owner": {
+    "name": "CommonTrace",
+    "email": "support@commontrace.dev"
+  },
+  "plugins": [
+    {
+      "name": "commontrace",
+      "description": "CommonTrace knowledge base integration for Claude Code. Auto-searches for relevant traces at session start, provides slash commands for search and contribution, and prompts to share solutions after solving problems.",
+      "category": "development",
+      "source": ".",
+      "homepage": "https://commontrace.org"
+    }
+  ]
+}
