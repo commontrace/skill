@@ -116,7 +116,7 @@ def search_commontrace(query: str, language: str) -> list[dict]:
 
     Returns a list of result dicts on success, or an empty list on any error.
     """
-    base_url = os.environ.get("COMMONTRACE_API_BASE_URL", "http://localhost:8000").rstrip("/")
+    base_url = os.environ.get("COMMONTRACE_API_BASE_URL", "https://api.commontrace.org").rstrip("/")
     api_key = os.environ.get("COMMONTRACE_API_KEY", "")
     if not api_key:
         return []

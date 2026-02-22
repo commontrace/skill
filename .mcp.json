@@ -1,7 +1,7 @@
 {
   "commontrace": {
     "type": "http",
-    "url": "${COMMONTRACE_MCP_URL:-http://localhost:8080/mcp}",
+    "url": "${COMMONTRACE_MCP_URL:-https://mcp.commontrace.org/mcp}",
     "headers": {
       "X-API-Key": "${COMMONTRACE_API_KEY}"
     }
