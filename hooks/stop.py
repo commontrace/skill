@@ -45,18 +45,24 @@ def get_session_key(data: dict) -> str:
     return str(session_id) if session_id else str(os.getppid())
 
 
-def topic_hash(message: str) -> str:
-    return hashlib.md5(message[:200].encode()).hexdigest()[:12]
+def pattern_dedup_key(pattern_name: str, evidence: dict) -> str:
+    """Stable hash based on pattern + evidence, not message content.
+
+    This ensures dedup works even when the assistant message changes
+    between responses -- the pattern and its evidence are what matter.
+    """
+    key = pattern_name + ":" + json.dumps(evidence, sort_keys=True, default=str)
+    return hashlib.md5(key.encode()).hexdigest()[:12]
 
 
-def was_already_prompted_for(session_key: str, msg_hash: str) -> bool:
-    return (RESOLUTION_DIR / f"dedup-{session_key}-{msg_hash}").exists()
+def was_already_prompted_for(session_key: str, dedup_key: str) -> bool:
+    return (RESOLUTION_DIR / f"dedup-{session_key}-{dedup_key}").exists()
 
 
-def mark_prompted(session_key: str, msg_hash: str) -> None:
+def mark_prompted(session_key: str, dedup_key: str) -> None:
     RESOLUTION_DIR.mkdir(parents=True, exist_ok=True)
     try:
-        (RESOLUTION_DIR / f"dedup-{session_key}-{msg_hash}").write_text(
+        (RESOLUTION_DIR / f"dedup-{session_key}-{dedup_key}").write_text(
             "1", encoding="utf-8")
     except OSError:
         pass
@@ -203,13 +209,6 @@ def main() -> None:
         return
 
     session_key = get_session_key(data)
-    assistant_msg = data.get("last_assistant_message", "")
-    if not assistant_msg:
-        return
-
-    msg_hash = topic_hash(assistant_msg)
-    if was_already_prompted_for(session_key, msg_hash):
-        return
 
     state_dir = get_state_dir(data)
     patterns = detect_patterns(state_dir)
@@ -217,10 +216,24 @@ def main() -> None:
     if not patterns:
         return
 
+    # Pick highest-priority pattern and build dedup key from it
+    priority = [
+        "post_contribution", "error_resolution", "workaround",
+        "config_discovery", "iteration", "multi_turn_work",
+    ]
+    for name in priority:
+        if name in patterns:
+            dedup_key = pattern_dedup_key(name, patterns[name])
+            if was_already_prompted_for(session_key, dedup_key):
+                return
+            break
+    else:
+        return
+
     # ── Post-contribution refinement takes priority ──
     if "post_contribution" in patterns:
         trace_id = patterns["post_contribution"].get("trace_id", "")
-        mark_prompted(session_key, msg_hash)
+        mark_prompted(session_key, dedup_key)
         print(json.dumps({
             "decision": "block",
             "reason": (
@@ -236,7 +249,7 @@ def main() -> None:
     # ── Error resolution is highest-confidence pattern ──
     if "error_resolution" in patterns:
         p = patterns["error_resolution"]
-        mark_prompted(session_key, msg_hash)
+        mark_prompted(session_key, dedup_key)
         print(json.dumps({
             "decision": "block",
             "reason": (
@@ -253,7 +266,7 @@ def main() -> None:
     # ── Workaround (error + research + fix) ──
     if "workaround" in patterns:
         p = patterns["workaround"]
-        mark_prompted(session_key, msg_hash)
+        mark_prompted(session_key, dedup_key)
         print(json.dumps({
             "decision": "block",
             "reason": (
@@ -269,7 +282,7 @@ def main() -> None:
     # ── Config discovery ──
     if "config_discovery" in patterns:
         files = patterns["config_discovery"]["config_files"]
-        mark_prompted(session_key, msg_hash)
+        mark_prompted(session_key, dedup_key)
         print(json.dumps({
             "decision": "block",
             "reason": (
@@ -285,7 +298,7 @@ def main() -> None:
     # ── Iteration (same file edited repeatedly) ──
     if "iteration" in patterns:
         p = patterns["iteration"]
-        mark_prompted(session_key, msg_hash)
+        mark_prompted(session_key, dedup_key)
         print(json.dumps({
             "decision": "block",
             "reason": (
@@ -300,7 +313,7 @@ def main() -> None:
 
     # ── Multi-turn catch-all ──
     if "multi_turn_work" in patterns:
-        mark_prompted(session_key, msg_hash)
+        mark_prompted(session_key, dedup_key)
         print(json.dumps({
             "decision": "block",
             "reason": (
