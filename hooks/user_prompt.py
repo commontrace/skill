@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """
-CommonTrace UserPromptSubmit hook — Layer 1 state writer.
+CommonTrace UserPromptSubmit hook — Layer 1 state writer + first-turn nudge.
 
-Increments the user turn counter in session state. This is a pure
-structural signal — it counts how many times the user sent a message,
-without analyzing what they said.
-
-The Stop hook uses this to determine conversation depth.
+Increments the user turn counter in session state. On the first user turn,
+injects a brief reminder to search CommonTrace before solving problems.
+This ensures Claude sees the reminder even if session_start search returned
+no results or failed silently.
 """
 
 import json
@@ -25,7 +24,20 @@ def main() -> None:
         return
 
     state_dir = get_state_dir(data)
-    increment_counter(state_dir, "user_turn_count")
+    count = increment_counter(state_dir, "user_turn_count")
+
+    # First turn: inject a brief nudge to search CommonTrace
+    if count == 1:
+        output = {
+            "hookSpecificOutput": {
+                "hookEventName": "UserPromptSubmit",
+                "additionalContext": (
+                    "Reminder: search CommonTrace (search_traces) before "
+                    "solving coding problems. Contribute after solving."
+                ),
+            }
+        }
+        print(json.dumps(output))
 
 
 if __name__ == "__main__":

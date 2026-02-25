@@ -254,16 +254,24 @@ def main() -> None:
 
     # Step 3: Search CommonTrace
     results = search_commontrace(query, language, api_key)
-    if not results:
-        return
 
-    formatted = [f"{i + 1}. {format_result(r)}" for i, r in enumerate(results)]
-    context_lines = "\n".join(formatted)
-    additional_context = (
-        f"CommonTrace found relevant knowledge for this project:\n\n"
-        f"{context_lines}\n\n"
-        f"Use search_traces MCP tool for more specific queries."
-    )
+    if results:
+        formatted = [f"{i + 1}. {format_result(r)}" for i, r in enumerate(results)]
+        context_lines = "\n".join(formatted)
+        additional_context = (
+            f"CommonTrace found relevant knowledge for this project:\n\n"
+            f"{context_lines}\n\n"
+            f"IMPORTANT: Before solving coding problems, search CommonTrace with "
+            f"search_traces for existing solutions. After solving, contribute with "
+            f"contribute_trace."
+        )
+    else:
+        additional_context = (
+            "CommonTrace knowledge base is connected. "
+            "IMPORTANT: Before solving coding problems, fixing bugs, or debugging errors, "
+            "search CommonTrace with search_traces for existing solutions. "
+            "After solving a non-trivial problem, contribute with contribute_trace."
+        )
 
     output = {
         "hookSpecificOutput": {
