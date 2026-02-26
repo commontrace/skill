@@ -1,27 +1,22 @@
 #!/usr/bin/env python3
 """
-CommonTrace PostToolUse hook — Layer 1 state writer + error search.
+CommonTrace PostToolUse hook — Layer 1 state writer + knowledge detection.
 
-Handles multiple tools via the tool_name field:
+Two responsibilities:
+1. Record structural signals (errors, changes, research, contributions)
+2. Detect knowledge crystallization moments in real-time
 
-Bash:
-  - Detect errors via exit code / stderr (structural, no keyword lists)
-  - Record to errors.jsonl or resolutions.jsonl
-  - On errors, search CommonTrace with the raw output tail
+Knowledge crystallization = state transitions where "not knowing" becomes
+"knowing". Detected structurally from tool-use sequences:
 
-Write/Edit/NotebookEdit:
-  - Record file path to changes.jsonl
-  - Flag config files separately (for config discovery pattern)
+  Search→Implement:    research events then code changes (no errors)
+  Fail→Succeed:        bash error then changes then bash success
+  Iterate→Converge:    same file edited N times then different files
+  Approach Reversal:   Write to a file previously Edit-ed 3+ times
+  Cross-file Breadth:  changes spanning 3+ directories
 
-WebSearch/WebFetch:
-  - Record research activity to research.jsonl
-
-MCP contribute_trace:
-  - Record contribution to contributions.jsonl
-
-Error detection is STRUCTURAL: non-zero exit code or presence of stderr.
-No hardcoded error keyword lists. The search query is the raw output
-tail — let the search engine handle relevance.
+Each detected transition writes a "knowledge candidate" to
+candidates.jsonl with context for the stop hook to score.
 """
 
 import json
@@ -248,7 +243,7 @@ def handle_code_change(data: dict, state_dir: Path) -> dict | None:
     tool_name = data.get("tool_name", "")
 
     # Check pre-code trigger BEFORE recording change (file may not exist yet)
-    trigger_output = _check_pre_code(file_path, tool_name)
+    trigger_output = _check_pre_code(file_path, tool_name, state_dir)
 
     append_event(state_dir, "changes.jsonl", {
         "tool": tool_name,
@@ -397,6 +392,12 @@ def _check_domain_entry(file_path: str, state_dir: Path) -> dict | None:
         if lang not in known:
             set_cooldown("domain_entry")
             _record_trigger_safe(state_dir, "domain_entry")
+            # Write bridge file for stop hook novelty scoring
+            try:
+                (state_dir / "domain_entry_fired").write_text(
+                    lang, encoding="utf-8")
+            except OSError:
+                pass
             api_key = load_api_key()
             if api_key:
                 query = f"{lang} common patterns and gotchas"
@@ -420,7 +421,120 @@ def _check_domain_entry(file_path: str, state_dir: Path) -> dict | None:
     return None
 
 
-def _check_pre_code(file_path: str, tool_name: str) -> dict | None:
+# ── Knowledge candidate detection ────────────────────────────────────────
+
+def _detect_knowledge_candidates(tool_name: str, data: dict,
+                                  state_dir: Path) -> None:
+    """Detect knowledge crystallization moments from tool-use sequences.
+
+    Writes candidates to candidates.jsonl when a state transition occurs.
+    Each candidate captures the pattern type and surrounding context so
+    the stop hook can score importance and pre-assemble contribution drafts.
+    """
+    now = time.time()
+
+    # ── Search→Implement: research followed by code changes, no errors ──
+    if tool_name in ("Write", "Edit", "NotebookEdit"):
+        research = read_events(state_dir, "research.jsonl")
+        errors = read_events(state_dir, "errors.jsonl")
+        changes = read_events(state_dir, "changes.jsonl")
+
+        if research and not errors:
+            # Research happened, no errors — agent learned then implemented
+            last_research_t = max(r.get("t", 0) for r in research)
+            # Only fire if research was recent (within last 10 minutes)
+            if now - last_research_t < 600:
+                # Dedup: check if we already recorded this transition
+                if not _has_candidate(state_dir, "research_then_implement"):
+                    queries = [r.get("query", "")[:100] for r in research[-3:]]
+                    file_path = ""
+                    ti = data.get("tool_input", {})
+                    if isinstance(ti, dict):
+                        file_path = ti.get("file_path", "")
+                    append_event(state_dir, "candidates.jsonl", {
+                        "pattern": "research_then_implement",
+                        "research_queries": queries,
+                        "file": file_path,
+                        "research_count": len(research),
+                        "changes_count": len(changes) + 1,
+                    })
+
+    # ── Fail→Succeed: bash success after previous errors + changes ──
+    if tool_name == "Bash":
+        is_error, output, error_text = detect_bash_error(data)
+        if not is_error and output:
+            errors = read_events(state_dir, "errors.jsonl")
+            changes = read_events(state_dir, "changes.jsonl")
+            if errors and changes:
+                last_error_t = max(e.get("t", 0) for e in errors)
+                last_change_t = max(c.get("t", 0) for c in changes)
+                # Error → change → success (temporal order)
+                if last_error_t < last_change_t:
+                    if not _has_candidate(state_dir, "fail_then_succeed"):
+                        error_summary = errors[-1].get("output_tail", "")[:200]
+                        changed_files = list({
+                            c.get("file", "") for c in changes
+                            if c.get("t", 0) > last_error_t
+                        })
+                        append_event(state_dir, "candidates.jsonl", {
+                            "pattern": "fail_then_succeed",
+                            "error_count": len(errors),
+                            "error_summary": error_summary,
+                            "fix_files": changed_files[:5],
+                            "verification": output[:200],
+                        })
+
+    # ── Approach Reversal: Write to file previously Edit-ed 3+ times ──
+    if tool_name == "Write":
+        ti = data.get("tool_input", {})
+        file_path = ti.get("file_path", "") if isinstance(ti, dict) else ""
+        if file_path:
+            changes = read_events(state_dir, "changes.jsonl")
+            edit_count = sum(
+                1 for c in changes
+                if c.get("file") == file_path and c.get("tool") == "Edit"
+            )
+            if edit_count >= 3:
+                if not _has_candidate(state_dir, "approach_reversal",
+                                      file_path):
+                    append_event(state_dir, "candidates.jsonl", {
+                        "pattern": "approach_reversal",
+                        "file": file_path,
+                        "previous_edits": edit_count,
+                    })
+
+    # ── Cross-file Breadth: changes spanning 3+ directories ──
+    if tool_name in ("Write", "Edit", "NotebookEdit"):
+        changes = read_events(state_dir, "changes.jsonl")
+        ti = data.get("tool_input", {})
+        file_path = ti.get("file_path", "") if isinstance(ti, dict) else ""
+        all_files = [c.get("file", "") for c in changes]
+        if file_path:
+            all_files.append(file_path)
+        dirs = {str(Path(f).parent) for f in all_files if f}
+        if len(dirs) >= 3:
+            if not _has_candidate(state_dir, "cross_file_breadth"):
+                append_event(state_dir, "candidates.jsonl", {
+                    "pattern": "cross_file_breadth",
+                    "directories": list(dirs)[:10],
+                    "file_count": len(set(all_files)),
+                })
+
+
+def _has_candidate(state_dir: Path, pattern: str,
+                   extra_key: str = "") -> bool:
+    """Check if a knowledge candidate of this type already exists."""
+    candidates = read_events(state_dir, "candidates.jsonl")
+    for c in candidates:
+        if c.get("pattern") == pattern:
+            if extra_key and c.get("file") != extra_key:
+                continue
+            return True
+    return False
+
+
+def _check_pre_code(file_path: str, tool_name: str,
+                    state_dir: Path = None) -> dict | None:
     """Trigger search before implementing a new file."""
     if tool_name != "Write":
         return None
@@ -435,7 +549,8 @@ def _check_pre_code(file_path: str, tool_name: str) -> dict | None:
         return None
 
     set_cooldown("pre_code")
-    _record_trigger_safe(state_dir, "pre_code")
+    if state_dir:
+        _record_trigger_safe(state_dir, "pre_code")
     api_key = load_api_key()
     if api_key:
         name = Path(file_path).stem.lower()
@@ -518,6 +633,9 @@ def main() -> None:
 
     state_dir = get_state_dir(data)
     output = None
+
+    # Detect knowledge crystallization on every tool use
+    _detect_knowledge_candidates(tool_name, data, state_dir)
 
     if tool_name == "Bash":
         output = handle_bash(data, state_dir)
