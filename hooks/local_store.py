@@ -55,6 +55,24 @@ CREATE TABLE IF NOT EXISTS events (
     data_json TEXT NOT NULL,
     created_at REAL NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS error_signatures (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER REFERENCES projects(id),
+    session_id TEXT REFERENCES sessions(id),
+    signature TEXT NOT NULL,
+    raw_tail TEXT NOT NULL,
+    created_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS trigger_feedback (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT,
+    trigger_name TEXT NOT NULL,
+    triggered_at REAL NOT NULL,
+    trace_consumed_id TEXT,
+    consumed_at REAL
+);
 """
 
 
@@ -274,3 +292,144 @@ def get_known_languages(conn: sqlite3.Connection,
         (project_id,),
     ).fetchall()
     return {r["entity_value"] for r in rows}
+
+
+# ── Fuzzy error matching ─────────────────────────────────────────────────
+
+def record_error_signature(conn: sqlite3.Connection, project_id: int,
+                           session_id: str, signature: str,
+                           raw_tail: str) -> None:
+    """Store a normalized error signature for cross-session matching."""
+    import time as _time
+    conn.execute(
+        "INSERT INTO error_signatures "
+        "(project_id, session_id, signature, raw_tail, created_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (project_id, session_id, signature, raw_tail[:500], _time.time()),
+    )
+    conn.commit()
+
+
+def find_similar_errors(conn: sqlite3.Connection, project_id: int,
+                        signature: str, current_session: str | None = None,
+                        threshold: float = 0.75) -> list[dict]:
+    """Find previous errors with similar signatures using token overlap.
+
+    Uses Jaccard similarity on whitespace-split tokens — lightweight,
+    no external dependencies, good enough for normalized error signatures.
+    """
+    query = (
+        "SELECT DISTINCT session_id, signature, raw_tail, created_at "
+        "FROM error_signatures WHERE project_id = ?"
+    )
+    params: list = [project_id]
+    if current_session:
+        query += " AND session_id != ?"
+        params.append(current_session)
+    query += " ORDER BY created_at DESC LIMIT 100"
+
+    rows = conn.execute(query, params).fetchall()
+    if not rows:
+        return []
+
+    current_tokens = set(signature.lower().split())
+    if not current_tokens:
+        return []
+
+    matches = []
+    seen_sessions: set[str] = set()
+    for row in rows:
+        if row["session_id"] in seen_sessions:
+            continue
+        prev_tokens = set(row["signature"].lower().split())
+        if not prev_tokens:
+            continue
+        intersection = current_tokens & prev_tokens
+        union = current_tokens | prev_tokens
+        similarity = len(intersection) / len(union) if union else 0
+        if similarity >= threshold:
+            matches.append({
+                "session_id": row["session_id"],
+                "signature": row["signature"],
+                "raw_tail": row["raw_tail"],
+                "created_at": row["created_at"],
+                "similarity": round(similarity, 2),
+            })
+            seen_sessions.add(row["session_id"])
+
+    return matches[:10]
+
+
+# ── Trigger feedback / reinforcement ─────────────────────────────────────
+
+def record_trigger(conn: sqlite3.Connection, session_id: str,
+                   trigger_name: str) -> int:
+    """Record that a search trigger fired. Returns the feedback row ID."""
+    import time as _time
+    conn.execute(
+        "INSERT INTO trigger_feedback (session_id, trigger_name, triggered_at) "
+        "VALUES (?, ?, ?)",
+        (session_id, trigger_name, _time.time()),
+    )
+    conn.commit()
+    return conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+
+
+def record_trace_consumed(conn: sqlite3.Connection, session_id: str,
+                          trace_id: str) -> None:
+    """Record that a trace was consumed (get_trace called).
+
+    Links back to the most recent unfulfilled trigger in this session.
+    """
+    import time as _time
+    # Find most recent trigger without a consumed trace
+    row = conn.execute(
+        "SELECT id FROM trigger_feedback "
+        "WHERE session_id = ? AND trace_consumed_id IS NULL "
+        "ORDER BY triggered_at DESC LIMIT 1",
+        (session_id,),
+    ).fetchone()
+    if row:
+        conn.execute(
+            "UPDATE trigger_feedback SET trace_consumed_id = ?, consumed_at = ? "
+            "WHERE id = ?",
+            (trace_id, _time.time(), row["id"]),
+        )
+    else:
+        # No trigger preceded this — record as organic consumption
+        conn.execute(
+            "INSERT INTO trigger_feedback "
+            "(session_id, trigger_name, triggered_at, trace_consumed_id, consumed_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (session_id, "organic", _time.time(), trace_id, _time.time()),
+        )
+    conn.commit()
+
+
+def get_trigger_effectiveness(conn: sqlite3.Connection,
+                              project_id: int | None = None) -> dict:
+    """Get trigger effectiveness stats (conversion rate per trigger type)."""
+    query = (
+        "SELECT trigger_name, "
+        "COUNT(*) as total, "
+        "SUM(CASE WHEN trace_consumed_id IS NOT NULL THEN 1 ELSE 0 END) as consumed "
+        "FROM trigger_feedback"
+    )
+    params: list = []
+    if project_id is not None:
+        query += (
+            " WHERE session_id IN "
+            "(SELECT id FROM sessions WHERE project_id = ?)"
+        )
+        params.append(project_id)
+    query += " GROUP BY trigger_name"
+
+    rows = conn.execute(query, params).fetchall()
+    return {
+        row["trigger_name"]: {
+            "total": row["total"],
+            "consumed": row["consumed"],
+            "rate": round(row["consumed"] / row["total"], 2) if row["total"] > 0 else 0,
+        }
+        for row in rows
+    }

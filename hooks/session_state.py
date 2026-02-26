@@ -100,6 +100,39 @@ def error_hash(text: str) -> str:
     return hashlib.md5(text[:300].encode()).hexdigest()[:10]
 
 
+def error_signature(text: str) -> str:
+    """Extract a fuzzy error signature by stripping variable parts.
+
+    Normalizes line numbers, file paths, hex addresses, timestamps,
+    and UUIDs so that the same error with different context produces
+    the same (or very similar) signature. This enables cross-session
+    fuzzy matching — the same exception at different line numbers or
+    in different files will match.
+    """
+    import re
+    sig = text[:500]
+    # Strip file paths (keep only basename)
+    sig = re.sub(r'(?:/[\w.-]+)+/([\w.-]+)', r'\1', sig)
+    # Windows paths
+    sig = re.sub(r'(?:[A-Z]:\\[\w.-]+\\)+([\w.-]+)', r'\1', sig)
+    # Line/column numbers
+    sig = re.sub(r'(?:line|ln|l)\s*\d+', 'line N', sig, flags=re.IGNORECASE)
+    sig = re.sub(r':\d+:\d+', ':N:N', sig)
+    sig = re.sub(r':\d+', ':N', sig)
+    # Hex addresses
+    sig = re.sub(r'0x[0-9a-fA-F]+', '0xADDR', sig)
+    # UUIDs
+    sig = re.sub(
+        r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}',
+        'UUID', sig, flags=re.IGNORECASE)
+    # Timestamps (ISO, epoch-like)
+    sig = re.sub(r'\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}[\w:.]*', 'TIMESTAMP', sig)
+    sig = re.sub(r'\b\d{10,13}\b', 'EPOCH', sig)
+    # Collapse whitespace
+    sig = re.sub(r'\s+', ' ', sig).strip()
+    return sig
+
+
 def is_config_file(file_path: str) -> bool:
     """Check if a file path looks like a configuration file."""
     p = Path(file_path)

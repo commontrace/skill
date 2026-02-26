@@ -184,7 +184,7 @@ def handle_bash(data: dict, state_dir: Path) -> dict | None:
         return None
 
     if is_error:
-        # ── Error: record to state + search CommonTrace ──
+        # ── Error: record to state + store signature ──
         append_event(state_dir, "errors.jsonl", {
             "source": "bash",
             "command": command[:200],
@@ -192,6 +192,7 @@ def handle_bash(data: dict, state_dir: Path) -> dict | None:
         })
 
         # Check for error recurrence in local store (takes priority)
+        # Also stores the error signature for future fuzzy matching
         recurrence_output = _check_error_recurrence(error_text, state_dir)
         if recurrence_output:
             return recurrence_output
@@ -202,6 +203,7 @@ def handle_bash(data: dict, state_dir: Path) -> dict | None:
             api_key = load_api_key()
             if api_key:
                 set_cooldown("bash_error")
+                _record_trigger_safe(state_dir, "bash_error")
                 # Use last 200 chars as search query
                 query = error_text.strip()[-200:]
                 if query:
@@ -276,6 +278,18 @@ def handle_research(data: dict, state_dir: Path) -> None:
     })
 
 
+def _record_trigger_safe(state_dir: Path, trigger_name: str) -> None:
+    """Record a trigger fire for reinforcement tracking. Never fails."""
+    try:
+        from local_store import _get_conn, record_trigger
+        session_id = state_dir.name
+        conn = _get_conn()
+        record_trigger(conn, session_id, trigger_name)
+        conn.close()
+    except Exception:
+        pass
+
+
 def _read_project_id(state_dir: Path) -> int | None:
     """Read project_id bridge file written by session_start."""
     try:
@@ -295,7 +309,12 @@ def _read_context_fingerprint(state_dir: Path) -> dict | None:
 
 
 def _check_error_recurrence(error_text: str, state_dir: Path) -> dict | None:
-    """Trigger enriched search when error matches previous session patterns."""
+    """Trigger enriched search when error matches previous session patterns.
+
+    Uses fuzzy signature matching (Jaccard similarity on normalized tokens)
+    instead of exact hash — catches the same exception at different line
+    numbers, different file paths, etc.
+    """
     if is_on_cooldown("error_recurrence", 60):
         return None
 
@@ -304,15 +323,28 @@ def _check_error_recurrence(error_text: str, state_dir: Path) -> dict | None:
         return None
 
     try:
-        from local_store import _get_conn, get_error_history
-        from session_state import error_hash
-        ehash = error_hash(error_text)
-        conn = _get_conn()
-        history = get_error_history(conn, project_id, ehash)
-        conn.close()
+        from local_store import (
+            _get_conn, find_similar_errors, record_error_signature,
+            record_trigger,
+        )
+        from session_state import error_signature
 
-        if history:
+        sig = error_signature(error_text)
+        session_id = state_dir.name
+        conn = _get_conn()
+
+        # Store this error's signature for future sessions
+        record_error_signature(conn, project_id, session_id, sig,
+                               error_text[-500:])
+
+        # Find similar errors from previous sessions
+        matches = find_similar_errors(conn, project_id, sig, session_id)
+
+        if matches:
             set_cooldown("error_recurrence")
+            record_trigger(conn, session_id, "error_recurrence")
+            conn.close()
+
             api_key = load_api_key()
             if api_key:
                 context = _read_context_fingerprint(state_dir)
@@ -320,18 +352,23 @@ def _check_error_recurrence(error_text: str, state_dir: Path) -> dict | None:
                 results = search_commontrace(query, api_key, context)
                 if results:
                     formatted = format_results(results)
+                    best_sim = max(m["similarity"] for m in matches)
+                    session_count = len(matches)
                     return {
                         "hookSpecificOutput": {
                             "hookEventName": "PostToolUse",
                             "additionalContext": (
-                                f"This error has occurred in {len(history)} "
-                                f"previous session(s). CommonTrace found "
-                                f"relevant traces:\n\n{formatted}\n\n"
+                                f"Similar error seen in {session_count} "
+                                f"previous session(s) ({best_sim:.0%} match). "
+                                f"CommonTrace found relevant traces:\n\n"
+                                f"{formatted}\n\n"
                                 f"Use get_trace with the ID to read "
                                 f"the full solution."
                             ),
                         }
                     }
+        else:
+            conn.close()
     except Exception:
         pass
     return None
@@ -359,6 +396,7 @@ def _check_domain_entry(file_path: str, state_dir: Path) -> dict | None:
 
         if lang not in known:
             set_cooldown("domain_entry")
+            _record_trigger_safe(state_dir, "domain_entry")
             api_key = load_api_key()
             if api_key:
                 query = f"{lang} common patterns and gotchas"
@@ -397,6 +435,7 @@ def _check_pre_code(file_path: str, tool_name: str) -> dict | None:
         return None
 
     set_cooldown("pre_code")
+    _record_trigger_safe(state_dir, "pre_code")
     api_key = load_api_key()
     if api_key:
         name = Path(file_path).stem.lower()
@@ -417,6 +456,26 @@ def _check_pre_code(file_path: str, tool_name: str) -> dict | None:
                 }
             }
     return None
+
+
+def handle_trace_consumption(data: dict, state_dir: Path) -> None:
+    """Handle get_trace: record that a trace was consumed (reinforcement)."""
+    tool_input = data.get("tool_input", {})
+    if not isinstance(tool_input, dict):
+        return
+
+    trace_id = tool_input.get("trace_id", "")
+    if not trace_id:
+        return
+
+    try:
+        from local_store import _get_conn, record_trace_consumed
+        session_id = state_dir.name
+        conn = _get_conn()
+        record_trace_consumed(conn, session_id, trace_id)
+        conn.close()
+    except Exception:
+        pass
 
 
 def handle_contribution(data: dict, state_dir: Path) -> None:
@@ -468,6 +527,9 @@ def main() -> None:
 
     elif tool_name in ("WebSearch", "WebFetch"):
         handle_research(data, state_dir)
+
+    elif "get_trace" in tool_name:
+        handle_trace_consumption(data, state_dir)
 
     elif "contribute_trace" in tool_name:
         handle_contribution(data, state_dir)
