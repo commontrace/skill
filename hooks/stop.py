@@ -8,15 +8,24 @@ weighted importance score to decide whether to prompt for contribution.
 
 Importance scoring (structural, no NLU):
   error_resolution:       3.0  — error→fix→verify cycle
+  security_hardening:     2.5  — security file changes after errors
+  user_correction:        2.5  — user redirected approach (file changed before/after turn)
+  approach_reversal:      2.5  — rewrote after iteration (paradigm shift)
   research_then_implement: 2.0  — searched then coded (no errors)
-  approach_reversal:       2.5  — rewrote after iteration (paradigm shift)
-  cross_file_breadth:      1.5  — changes spanning 3+ directories
-  iteration_depth:         1.5  — same file edited many times
-  temporal_investment:     1.0  — long session with sustained activity
-  config_discovery:        2.0  — config changes that fixed errors
-  novelty_encounter:       2.0  — new language/domain in project
+  test_fix_cycle:         2.0  — test fails → fix code → test passes
+  dependency_resolution:  2.0  — package manager errors → config fix → success
+  config_discovery:       2.0  — config changes that fixed errors
+  novelty_encounter:      2.0  — new language/domain in project
+  infra_discovery:        2.0  — infrastructure file changes after errors
+  migration_pattern:      2.0  — 5+ files across dirs + config changes
+  iteration_depth:        1.5  — same file edited many times (scales to 2.0)
+  cross_file_breadth:     1.5  — changes spanning 3+ directories
+  generation_effect:      1.5  — solved without external knowledge
+  workaround:             1.5  — research + errors + changes
+  temporal_investment:    1.0  — long session with sustained activity
 
-Threshold >= 4.0 triggers contribution prompt.
+Temporal proximity compounding: patterns near high-signal events get a
+0-30% boost (synaptic tagging). Threshold >= 4.0 triggers contribution.
 
 Also handles: post-contribution refinement, session persistence,
 anonymized trigger stats reporting.
@@ -192,6 +201,126 @@ def compute_importance(state_dir: Path) -> tuple[float, str, dict]:
             "error_count": len(errors),
         }
 
+    # ── User Correction (2.5) — user redirected the approach ──
+    correction_candidates = [
+        c for c in candidates if c.get("pattern") == "user_correction"
+    ]
+    if correction_candidates:
+        scores["user_correction"] = 2.5
+        cc = correction_candidates[-1]
+        evidence["user_correction"] = {
+            "file": cc.get("file", ""),
+            "pre_turn_edits": cc.get("pre_turn_edits", 0),
+        }
+
+    # ── Test Fix Cycle (2.0) — tests fail → fix code → tests pass ──
+    test_candidates = [
+        c for c in candidates if c.get("pattern") == "test_fix_cycle"
+    ]
+    if test_candidates:
+        scores["test_fix_cycle"] = 2.0
+        tc = test_candidates[-1]
+        evidence["test_fix_cycle"] = {
+            "test_failures": tc.get("test_failures", 0),
+            "fix_files": tc.get("fix_files", [])[:3],
+        }
+
+    # ── Dependency Resolution (2.0) — version/package conflicts resolved ──
+    dep_candidates = [
+        c for c in candidates if c.get("pattern") == "dependency_resolution"
+    ]
+    if dep_candidates:
+        scores["dependency_resolution"] = 2.0
+        dc = dep_candidates[-1]
+        evidence["dependency_resolution"] = {
+            "error_count": dc.get("error_count", 0),
+            "config_files": dc.get("config_files", [])[:3],
+        }
+
+    # ── Security Hardening (2.5) — security fix after errors ──
+    sec_candidates = [
+        c for c in candidates if c.get("pattern") == "security_hardening"
+    ]
+    if sec_candidates:
+        scores["security_hardening"] = 2.5
+        sc = sec_candidates[-1]
+        evidence["security_hardening"] = {
+            "security_files": sc.get("security_files", [])[:3],
+            "error_count": sc.get("error_count", 0),
+        }
+
+    # ── Infra Discovery (2.0) — deployment/infrastructure fixes ──
+    infra_candidates = [
+        c for c in candidates if c.get("pattern") == "infra_discovery"
+    ]
+    if infra_candidates:
+        scores["infra_discovery"] = 2.0
+        ic = infra_candidates[-1]
+        evidence["infra_discovery"] = {
+            "infra_files": ic.get("infra_files", [])[:3],
+            "error_count": ic.get("error_count", 0),
+        }
+
+    # ── Migration Pattern (2.0) — library/version migration ──
+    mig_candidates = [
+        c for c in candidates if c.get("pattern") == "migration_pattern"
+    ]
+    if mig_candidates:
+        scores["migration_pattern"] = 2.0
+        mc = mig_candidates[-1]
+        evidence["migration_pattern"] = {
+            "total_files": mc.get("total_files", 0),
+            "config_files": mc.get("config_files", [])[:3],
+        }
+
+    # ── Generation Effect (1.5) — solved without external help ──
+    consumed_traces = 0
+    try:
+        from local_store import _get_conn
+        conn = _get_conn()
+        row = conn.execute(
+            "SELECT COUNT(*) FROM trigger_feedback "
+            "WHERE session_id = ? AND trace_consumed_id IS NOT NULL",
+            (state_dir.name,),
+        ).fetchone()
+        consumed_traces = row[0] if row else 0
+        conn.close()
+    except Exception:
+        pass
+
+    if errors and resolutions and not research and consumed_traces == 0:
+        scores["generation_effect"] = 1.5
+        evidence["generation_effect"] = {
+            "errors": len(errors), "external_help": False,
+        }
+    elif errors and resolutions and research and consumed_traces == 0:
+        scores["generation_effect"] = 1.0
+        evidence["generation_effect"] = {
+            "errors": len(errors), "researched_but_no_trace": True,
+        }
+
+    # ── Temporal Proximity Compounding ──
+    # Patterns near high-signal events get a boost (synaptic tagging)
+    HIGH_SIGNAL = {
+        "error_resolution", "approach_reversal", "security_hardening",
+    }
+    if candidates and len(candidates) >= 2:
+        high_events = [
+            c for c in candidates if c.get("pattern") in HIGH_SIGNAL
+        ]
+        if high_events:
+            WINDOW_SECONDS = 300
+            for candidate in candidates:
+                pattern = candidate.get("pattern", "")
+                if pattern in HIGH_SIGNAL or pattern not in scores:
+                    continue
+                for he in high_events:
+                    dt = abs(candidate.get("t", 0) - he.get("t", 0))
+                    if dt < WINDOW_SECONDS:
+                        proximity = 1.0 - (dt / WINDOW_SECONDS)
+                        scores[pattern] *= (1.0 + 0.3 * proximity)
+                        break
+
     # Total score
     total = sum(scores.values())
 
@@ -248,6 +377,36 @@ def _build_prompt(score: float, top_pattern: str, evidence: dict,
             f"searches) and worked around {evidence.get('error_count', 0)} "
             f"error(s). Workarounds are especially valuable."
         ),
+        "user_correction": (
+            f"You changed approach on {Path(evidence.get('file', '')).name} "
+            f"after user feedback — the gap between your initial approach and "
+            f"the correct one is exactly the knowledge other agents need."
+        ),
+        "test_fix_cycle": (
+            f"Tests failed, you fixed the code "
+            f"({', '.join(Path(f).name for f in evidence.get('fix_files', [])[:3])}), "
+            f"and tests passed. The fix pattern is valuable knowledge."
+        ),
+        "dependency_resolution": (
+            f"You resolved dependency/version conflicts involving "
+            f"{', '.join(Path(f).name for f in evidence.get('config_files', [])[:3])}. "
+            f"Package compatibility knowledge is extremely reusable."
+        ),
+        "security_hardening": (
+            f"You fixed a security-related issue in "
+            f"{', '.join(Path(f).name for f in evidence.get('security_files', [])[:3])}. "
+            f"Security knowledge is critical to share — dangerous to miss."
+        ),
+        "infra_discovery": (
+            f"You figured out infrastructure configuration "
+            f"({', '.join(Path(f).name for f in evidence.get('infra_files', [])[:3])}). "
+            f"Deployment knowledge is notoriously underdocumented."
+        ),
+        "migration_pattern": (
+            f"You modified {evidence.get('total_files', 0)} files across "
+            f"multiple directories — this looks like a migration. "
+            f"Migration paths are poorly documented and highly reusable."
+        ),
     }
 
     base = prompts.get(top_pattern, (
@@ -265,10 +424,33 @@ def _build_prompt(score: float, top_pattern: str, evidence: dict,
                 f"{', '.join(p.replace('_', ' ') for p in patterns_found)})"
             )
 
+    # Build detection metadata for somatic intensity computation at API
+    errors = read_events(state_dir, "errors.jsonl")
+    changes = read_events(state_dir, "changes.jsonl")
+    all_events = errors + changes + read_events(state_dir, "research.jsonl")
+    timestamps = [e.get("t", 0) for e in all_events if e.get("t")]
+    duration_min = round(
+        (max(timestamps) - min(timestamps)) / 60, 1) if timestamps else 0
+
+    file_counts = {}
+    for c in changes:
+        f = c.get("file", "")
+        file_counts[f] = file_counts.get(f, 0) + 1
+    max_iterations = max(file_counts.values()) if file_counts else 0
+
+    metadata_hint = (
+        f'Include this in metadata_json: '
+        f'{{"detection_pattern": "{top_pattern}", '
+        f'"error_count": {len(errors)}, '
+        f'"time_to_resolution_minutes": {duration_min}, '
+        f'"iteration_count": {max_iterations}}}'
+    )
+
     return (
         f"{base}{journey} "
         f"Would you like to contribute to CommonTrace? "
-        f"Use contribute_trace to submit, or say 'skip'."
+        f"Use contribute_trace to submit, or say 'skip'. "
+        f"{metadata_hint}"
     )
 
 

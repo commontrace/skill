@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from session_state import get_state_dir, increment_counter
+from session_state import get_state_dir, increment_counter, append_event
 
 
 def main() -> None:
@@ -25,6 +25,9 @@ def main() -> None:
 
     state_dir = get_state_dir(data)
     count = increment_counter(state_dir, "user_turn_count")
+
+    # Record timestamp for user_correction detection in post_tool_use
+    append_event(state_dir, "user_turns.jsonl", {"turn": count})
 
     # First turn: inject a brief nudge to search CommonTrace
     if count == 1:

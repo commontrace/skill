@@ -42,6 +42,50 @@ EXTENSION_TO_LANGUAGE = {
     ".rs": "rust", ".java": "java", ".rb": "ruby",
 }
 
+# Package manager commands for dependency_resolution detection
+PACKAGE_COMMANDS = {
+    "pip", "pip3", "npm", "yarn", "pnpm", "cargo", "go mod",
+    "bundle", "composer", "poetry", "pdm", "uv",
+}
+
+# Test commands for test_fix_cycle detection
+TEST_COMMANDS = {
+    "pytest", "jest", "mocha", "vitest", "cargo test", "go test",
+    "npm test", "yarn test", "rspec", "phpunit", "unittest",
+    "npm run test", "yarn run test",
+}
+
+# Security-related file name fragments
+SECURITY_FILE_PATTERNS = {
+    "auth", "security", "cors", "csp", "middleware",
+    "permission", "sanitiz", "validat", "secret", "crypt",
+}
+
+# Security audit tools
+SECURITY_COMMANDS = {
+    "bandit", "npm audit", "snyk", "cargo audit", "safety check",
+    "trivy", "semgrep",
+}
+
+# Infrastructure file path patterns
+INFRA_PATTERNS = {
+    "dockerfile", "docker-compose", ".github/workflows",
+    "terraform", "nginx", "procfile", "railway",
+    "vercel.json", "netlify.toml", "fly.toml",
+    ".gitlab-ci", "jenkinsfile", "cloudbuild",
+    "k8s", "kubernetes", "helm",
+}
+
+
+def _is_security_file(file_path: str) -> bool:
+    name = Path(file_path).name.lower()
+    return any(p in name for p in SECURITY_FILE_PATTERNS)
+
+
+def _is_infra_file(file_path: str) -> bool:
+    path_lower = file_path.lower()
+    return any(p in path_lower for p in INFRA_PATTERNS)
+
 
 def load_api_key() -> str:
     try:
@@ -518,6 +562,156 @@ def _detect_knowledge_candidates(tool_name: str, data: dict,
                     "pattern": "cross_file_breadth",
                     "directories": list(dirs)[:10],
                     "file_count": len(set(all_files)),
+                })
+
+    # ── User Correction: same file changed before and after user message ──
+    if tool_name in ("Write", "Edit", "NotebookEdit"):
+        ti = data.get("tool_input", {})
+        file_path = ti.get("file_path", "") if isinstance(ti, dict) else ""
+        if file_path:
+            user_turns = read_events(state_dir, "user_turns.jsonl")
+            changes = read_events(state_dir, "changes.jsonl")
+            if user_turns and len(changes) >= 2:
+                last_turn_t = max(u.get("t", 0) for u in user_turns)
+                # Changes to same file BEFORE the last user turn
+                pre_turn_edits = [
+                    c for c in changes
+                    if c.get("file") == file_path
+                    and c.get("t", 0) < last_turn_t
+                ]
+                # Current edit is AFTER user turn (we're in post_tool_use)
+                if pre_turn_edits and now > last_turn_t:
+                    if not _has_candidate(state_dir, "user_correction",
+                                          file_path):
+                        append_event(state_dir, "candidates.jsonl", {
+                            "pattern": "user_correction",
+                            "file": file_path,
+                            "pre_turn_edits": len(pre_turn_edits),
+                        })
+
+    # ── Test Fix Cycle: test fails → code changes → test passes ──
+    if tool_name == "Bash":
+        ti = data.get("tool_input", {})
+        command = ti.get("command", "") if isinstance(ti, dict) else ""
+        is_error, output, error_text = detect_bash_error(data)
+        if not is_error and any(tc in command for tc in TEST_COMMANDS):
+            errors = read_events(state_dir, "errors.jsonl")
+            changes = read_events(state_dir, "changes.jsonl")
+            test_failures = [
+                e for e in errors
+                if any(tc in e.get("command", "") for tc in TEST_COMMANDS)
+            ]
+            non_test_changes = [
+                c for c in changes
+                if "test" not in c.get("file", "").lower()
+                and "spec" not in c.get("file", "").lower()
+            ]
+            if test_failures and non_test_changes:
+                if not _has_candidate(state_dir, "test_fix_cycle"):
+                    append_event(state_dir, "candidates.jsonl", {
+                        "pattern": "test_fix_cycle",
+                        "test_failures": len(test_failures),
+                        "fix_files": [
+                            c.get("file") for c in non_test_changes[:5]
+                        ],
+                    })
+
+    # ── Dependency Resolution: package errors → config changes → success ──
+    if tool_name == "Bash":
+        ti = data.get("tool_input", {})
+        command = ti.get("command", "") if isinstance(ti, dict) else ""
+        is_error, output, error_text = detect_bash_error(data)
+        if not is_error and any(pc in command for pc in PACKAGE_COMMANDS):
+            errors = read_events(state_dir, "errors.jsonl")
+            changes = read_events(state_dir, "changes.jsonl")
+            pkg_errors = [
+                e for e in errors
+                if any(pc in e.get("command", "") for pc in PACKAGE_COMMANDS)
+            ]
+            config_changes = [
+                c for c in changes if c.get("is_config")
+            ]
+            if pkg_errors and config_changes:
+                if not _has_candidate(state_dir, "dependency_resolution"):
+                    append_event(state_dir, "candidates.jsonl", {
+                        "pattern": "dependency_resolution",
+                        "error_count": len(pkg_errors),
+                        "config_files": [
+                            c.get("file") for c in config_changes[:3]
+                        ],
+                    })
+
+    # ── Security Hardening: security file changes + errors ──
+    if tool_name in ("Write", "Edit", "NotebookEdit"):
+        ti = data.get("tool_input", {})
+        file_path = ti.get("file_path", "") if isinstance(ti, dict) else ""
+        if file_path and _is_security_file(file_path):
+            errors = read_events(state_dir, "errors.jsonl")
+            if errors:
+                if not _has_candidate(state_dir, "security_hardening"):
+                    append_event(state_dir, "candidates.jsonl", {
+                        "pattern": "security_hardening",
+                        "security_files": [file_path],
+                        "error_count": len(errors),
+                    })
+
+    # Also detect security tool success after failures
+    if tool_name == "Bash":
+        ti = data.get("tool_input", {})
+        command = ti.get("command", "") if isinstance(ti, dict) else ""
+        is_error, output, error_text = detect_bash_error(data)
+        if not is_error and any(sc in command for sc in SECURITY_COMMANDS):
+            errors = read_events(state_dir, "errors.jsonl")
+            security_errors = [
+                e for e in errors
+                if any(sc in e.get("command", "") for sc in SECURITY_COMMANDS)
+            ]
+            if security_errors:
+                if not _has_candidate(state_dir, "security_hardening"):
+                    changes = read_events(state_dir, "changes.jsonl")
+                    append_event(state_dir, "candidates.jsonl", {
+                        "pattern": "security_hardening",
+                        "security_files": [
+                            c.get("file") for c in changes
+                            if _is_security_file(c.get("file", ""))
+                        ][:3],
+                        "error_count": len(security_errors),
+                    })
+
+    # ── Infra Discovery: infrastructure file changes + errors ──
+    if tool_name in ("Write", "Edit", "NotebookEdit"):
+        ti = data.get("tool_input", {})
+        file_path = ti.get("file_path", "") if isinstance(ti, dict) else ""
+        if file_path and _is_infra_file(file_path):
+            errors = read_events(state_dir, "errors.jsonl")
+            if errors:
+                if not _has_candidate(state_dir, "infra_discovery"):
+                    changes = read_events(state_dir, "changes.jsonl")
+                    infra_files = [
+                        c.get("file") for c in changes
+                        if _is_infra_file(c.get("file", ""))
+                    ]
+                    append_event(state_dir, "candidates.jsonl", {
+                        "pattern": "infra_discovery",
+                        "infra_files": (infra_files + [file_path])[:3],
+                        "error_count": len(errors),
+                    })
+
+    # ── Migration Pattern: 5+ files across 2+ dirs + config changes ──
+    if tool_name in ("Write", "Edit"):
+        changes = read_events(state_dir, "changes.jsonl")
+        config_changes = [c for c in changes if c.get("is_config")]
+        all_files = set(c.get("file", "") for c in changes)
+        all_dirs = set(str(Path(f).parent) for f in all_files if f)
+        if len(all_files) >= 5 and config_changes and len(all_dirs) >= 2:
+            if not _has_candidate(state_dir, "migration_pattern"):
+                append_event(state_dir, "candidates.jsonl", {
+                    "pattern": "migration_pattern",
+                    "total_files": len(all_files),
+                    "config_files": [
+                        c.get("file") for c in config_changes[:3]
+                    ],
+                    "directories": list(all_dirs)[:5],
                 })
 
 
