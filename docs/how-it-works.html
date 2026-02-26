@@ -43,7 +43,6 @@
     padding: 40px 24px 80px;
   }
 
-  /* ── Header ────────────────────────────── */
   header {
     text-align: center;
     padding: 60px 0 48px;
@@ -74,19 +73,13 @@
     margin-bottom: 16px;
   }
 
-  /* ── Conversation ──────────────────────── */
-  .conversation {
-    margin: 40px 0;
-  }
+  .conversation { margin: 40px 0; }
   .msg {
     display: flex;
     gap: 16px;
     margin-bottom: 28px;
     align-items: flex-start;
   }
-  .msg.human { flex-direction: row; }
-  .msg.claude { flex-direction: row; }
-
   .avatar {
     width: 36px;
     height: 36px;
@@ -100,14 +93,8 @@
     font-family: 'IBM Plex Mono', monospace;
     margin-top: 2px;
   }
-  .msg.human .avatar {
-    background: var(--accent);
-    color: #fff;
-  }
-  .msg.claude .avatar {
-    background: var(--purple);
-    color: #fff;
-  }
+  .msg.human .avatar { background: var(--accent); color: #fff; }
+  .msg.claude .avatar { background: var(--purple); color: #fff; }
 
   .bubble {
     background: var(--surface);
@@ -117,10 +104,7 @@
     max-width: 90%;
     box-shadow: 0 1px 3px rgba(0,0,0,0.04);
   }
-  .msg.human .bubble {
-    background: var(--accent-light);
-    border-color: #bfdbfe;
-  }
+  .msg.human .bubble { background: var(--accent-light); border-color: #bfdbfe; }
   .bubble p { margin-bottom: 12px; }
   .bubble p:last-child { margin-bottom: 0; }
   .bubble strong { font-weight: 600; }
@@ -132,7 +116,6 @@
     font-size: 0.88em;
   }
 
-  /* ── Section headers ───────────────────── */
   .section-label {
     display: flex;
     align-items: center;
@@ -163,7 +146,6 @@
     font-family: 'IBM Plex Mono', monospace;
   }
 
-  /* ── Diagrams ──────────────────────────── */
   .diagram {
     background: var(--code-bg);
     color: var(--code-text);
@@ -184,7 +166,6 @@
   .diagram .dim { color: #6c7086; }
   .diagram .yellow { color: #f9e2af; }
 
-  /* ── Example scenarios ─────────────────── */
   .scenario {
     border: 1px solid var(--border);
     border-radius: 10px;
@@ -200,6 +181,12 @@
     gap: 8px;
   }
   .scenario-header .icon { font-size: 1.1rem; }
+  .scenario-header .weight {
+    margin-left: auto;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.8rem;
+    font-weight: 500;
+  }
   .scenario.error .scenario-header { background: var(--red-light); color: var(--red); border-bottom: 1px solid #fecdd3; }
   .scenario.success .scenario-header { background: var(--green-light); color: var(--green); border-bottom: 1px solid #bbf7d0; }
   .scenario.research .scenario-header { background: var(--orange-light); color: var(--orange); border-bottom: 1px solid #fed7aa; }
@@ -230,7 +217,6 @@
     margin-top: 1px;
   }
 
-  /* ── Table ─────────────────────────────── */
   .state-table {
     width: 100%;
     border-collapse: collapse;
@@ -262,7 +248,6 @@
   }
   .state-table tr:last-child td { border-bottom: none; }
 
-  /* ── Callout ───────────────────────────── */
   .callout {
     border-left: 3px solid;
     padding: 14px 18px;
@@ -274,31 +259,6 @@
   .callout.warning { border-color: var(--orange); background: var(--orange-light); }
   .callout.key { border-color: var(--green); background: var(--green-light); }
 
-  /* ── Flow arrows ───────────────────────── */
-  .flow {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    align-items: center;
-    margin: 16px 0;
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.85rem;
-  }
-  .flow .node {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    padding: 6px 12px;
-    border-radius: 6px;
-  }
-  .flow .arrow { color: var(--text-secondary); }
-  .flow .state-node {
-    background: var(--green-light);
-    border-color: #bbf7d0;
-    color: var(--green);
-    font-weight: 500;
-  }
-
-  /* ── Footer ────────────────────────────── */
   footer {
     margin-top: 64px;
     padding-top: 24px;
@@ -313,58 +273,59 @@
 <div class="container">
 
 <header>
-  <div class="version-badge">skill v0.2.0</div>
+  <div class="version-badge">skill v0.3.0</div>
   <h1>How CommonTrace Detects Knowledge</h1>
-  <p>A walkthrough of the three-layer hook system that watches a coding session and knows when to ask "should we save this?"</p>
+  <p>A walkthrough of the two-phase detection system that watches a coding session, scores accumulated knowledge, and knows when to ask "should we save this?"</p>
 </header>
 
-<!-- ═══════════════════════════════════════════════════ -->
-<div class="section-label"><span class="num">1</span> The Problem</div>
+<!-- =========================================================== -->
+<div class="section-label"><span class="num">1</span> The Big Picture</div>
 
 <div class="conversation">
   <div class="msg human">
     <div class="avatar">You</div>
     <div class="bubble">
-      <p>How does CommonTrace know when I've solved a problem worth saving? I don't want it bugging me after every <code>git status</code>.</p>
+      <p>How does CommonTrace know when I've solved a problem worth saving?</p>
     </div>
   </div>
 
   <div class="msg claude">
     <div class="avatar">CT</div>
     <div class="bubble">
-      <p>The system has <strong>three layers</strong>. Think of it like this:</p>
-      <p><strong>Layer 1</strong> is a bunch of tiny recorders. Every time Claude uses a tool &mdash; runs a Bash command, edits a file, searches the web &mdash; a hook script writes one line to a state file. Just facts: "file X was edited", "Bash exited with code 1", "user sent their 4th message". No interpretation.</p>
-      <p><strong>Layer 2</strong> is the pattern detector. Every time Claude finishes a response, the Stop hook reads all those state files and looks for structural patterns: "there were errors, then code changes, then a successful run" &mdash; that's an error resolution cycle.</p>
-      <p><strong>Layer 3</strong> is you and Claude. The hook just fires a prompt. Claude decides if the solution is actually worth contributing, and you confirm or say "skip".</p>
+      <p>Two-phase detection. <strong>Phase 1</strong> runs in real-time &mdash; every time Claude uses a tool, a hook records structural facts and checks for knowledge crystallization moments. <strong>Phase 2</strong> runs at session end &mdash; the stop hook reads all accumulated facts, scores their combined importance, and only prompts if the total score exceeds a threshold.</p>
+      <p>The key insight: no single event is enough to prompt. A bash error alone is not knowledge. An error <em>followed by code changes followed by a successful verification</em> is knowledge. The system detects <strong>state transitions</strong> &mdash; from "not knowing" to "knowing".</p>
     </div>
   </div>
 </div>
 
-<div class="diagram"><span class="dim">Layer 1 (State Writers)</span>                 <span class="dim">Layer 2 (Patterns)</span>           <span class="dim">Layer 3 (Decision)</span>
+<div class="diagram"><span class="dim">Phase 1: Real-time Detection</span>                   <span class="dim">Phase 2: Importance Scoring</span>
 
 <span class="highlight">PostToolUse</span> (Bash)    ──┐
-<span class="highlight">PostToolUse</span> (Write)   ──┤
-<span class="highlight">PostToolUse</span> (Edit)    ──┤                         ┌──────────────┐
-<span class="highlight">PostToolUse</span> (Notebook) ─┤── <span class="orange">State Files</span> ──────────▶│  <span class="purple">Stop Hook</span>    │──▶ <span class="green">Claude + User</span>
-<span class="highlight">PostToolUseFailure</span>    ──┤   <span class="dim">(JSONL, append)</span>       │  <span class="dim">reads state</span>  │    <span class="dim">decide what</span>
-<span class="highlight">UserPromptSubmit</span>      ──┘                         │  <span class="dim">finds patterns</span>│    <span class="dim">to contribute</span>
-                                                    └──────────────┘</div>
+<span class="highlight">PostToolUse</span> (Write)   ──┤── <span class="orange">State Files</span> ──┐
+<span class="highlight">PostToolUse</span> (Edit)    ──┤   <span class="dim">(JSONL)</span>       │         ┌──────────────────┐
+<span class="highlight">PostToolUse</span> (Search)  ──┤               ├────────▶│  <span class="purple">Stop Hook</span>          │──▶ <span class="green">Prompt</span>
+<span class="highlight">PostToolUse</span> (get_trace)─┤               │         │  scores 16 patterns  │    <span class="dim">only if</span>
+<span class="highlight">UserPromptSubmit</span>      ──┘               │         │  threshold: <span class="yellow">4.0</span>      │    <span class="dim">score &ge; 4.0</span>
+                                         │         └──────────────────┘
+                          <span class="orange">candidates.jsonl</span> ─┘
+                          <span class="dim">(real-time knowledge</span>
+                          <span class="dim"> candidates from Phase 1)</span></div>
 
-<!-- ═══════════════════════════════════════════════════ -->
-<div class="section-label"><span class="num">2</span> Layer 1 &mdash; The Recorders</div>
+<!-- =========================================================== -->
+<div class="section-label"><span class="num">2</span> Phase 1 &mdash; Real-time Recording &amp; Candidate Detection</div>
 
 <div class="conversation">
   <div class="msg human">
     <div class="avatar">You</div>
     <div class="bubble">
-      <p>What exactly gets recorded? And where?</p>
+      <p>What gets recorded?</p>
     </div>
   </div>
 
   <div class="msg claude">
     <div class="avatar">CT</div>
     <div class="bubble">
-      <p>Everything goes into <code>/tmp/commontrace-sessions/{session_id}/</code>. Each session gets its own directory. Inside, there are JSONL files &mdash; one JSON object per line, append-only. Here's what each hook writes:</p>
+      <p>Everything goes into <code>/tmp/commontrace-sessions/{session_id}/</code> as JSONL files. But <code>post_tool_use.py</code> now does <strong>two things</strong>: it records facts, AND it checks for knowledge crystallization in real-time. When it detects a state transition, it writes a "candidate" to <code>candidates.jsonl</code>.</p>
     </div>
   </div>
 </div>
@@ -372,54 +333,46 @@
 <table class="state-table">
   <thead>
     <tr>
-      <th>Hook</th>
-      <th>Triggers on</th>
-      <th>Writes to</th>
-      <th>What it records</th>
+      <th>State File</th>
+      <th>Written When</th>
+      <th>Contains</th>
     </tr>
   </thead>
   <tbody>
     <tr>
-      <td><code>post_tool_use.py</code></td>
-      <td>Bash (error)</td>
       <td><code>errors.jsonl</code></td>
+      <td>Bash exits non-zero or has stderr</td>
       <td>Command, output tail, timestamp</td>
     </tr>
     <tr>
-      <td><code>post_tool_use.py</code></td>
-      <td>Bash (success after errors)</td>
       <td><code>resolutions.jsonl</code></td>
+      <td>Bash succeeds after previous errors</td>
       <td>Command, output preview, error count before</td>
     </tr>
     <tr>
-      <td><code>post_tool_use.py</code></td>
-      <td>Write / Edit / NotebookEdit</td>
       <td><code>changes.jsonl</code></td>
-      <td>File path, tool name, is_config flag</td>
+      <td>Write / Edit / NotebookEdit</td>
+      <td>File path, tool name, <code>is_config</code> flag</td>
     </tr>
     <tr>
-      <td><code>post_tool_use.py</code></td>
-      <td>WebSearch / WebFetch</td>
       <td><code>research.jsonl</code></td>
+      <td>WebSearch / WebFetch</td>
       <td>Tool name, query or URL</td>
     </tr>
     <tr>
-      <td><code>post_tool_use.py</code></td>
-      <td>MCP contribute_trace</td>
       <td><code>contributions.jsonl</code></td>
+      <td>MCP contribute_trace</td>
       <td>Trace ID (UUID)</td>
     </tr>
     <tr>
-      <td><code>post_tool_failure.py</code></td>
-      <td>Any tool failure</td>
-      <td><code>errors.jsonl</code></td>
-      <td>Tool name, error message, input summary</td>
+      <td><code>user_turns.jsonl</code></td>
+      <td>Every user message</td>
+      <td>Turn number + timestamp</td>
     </tr>
     <tr>
-      <td><code>user_prompt.py</code></td>
-      <td>Every user message</td>
-      <td><code>user_turn_count</code></td>
-      <td>Increments counter (plain integer)</td>
+      <td><code>candidates.jsonl</code></td>
+      <td>Knowledge crystallization detected</td>
+      <td>Pattern type + surrounding context</td>
     </tr>
   </tbody>
 </table>
@@ -428,445 +381,465 @@
   <div class="msg human">
     <div class="avatar">You</div>
     <div class="bubble">
-      <p>How does it know a Bash command failed? Does it look for "Error:" in the output?</p>
+      <p>What are the real-time candidates? What patterns does Phase 1 detect?</p>
     </div>
   </div>
 
   <div class="msg claude">
     <div class="avatar">CT</div>
     <div class="bubble">
-      <p><strong>No keyword matching.</strong> That was an explicit design decision. Hardcoded error keyword lists are brittle &mdash; they miss errors not in the list and false-positive on things like <code>grep</code> returning exit code 1.</p>
-      <p>Instead, error detection is purely structural:</p>
-      <p><strong>1.</strong> Check <code>tool_response.exitCode</code> &mdash; non-zero means error. This is OS-level metadata, not text parsing.</p>
-      <p><strong>2.</strong> If no exit code field, check if <code>stderr</code> has content. Unix convention: stderr is for errors.</p>
-      <p><strong>3.</strong> If the response is a plain string, look for <code>exit code: N</code> at the end &mdash; this is metadata appended by Claude Code, not error message parsing.</p>
-      <p>If none of these fire, it's treated as success. We'd rather miss an error than false-positive on normal output.</p>
+      <p>Phase 1 detects <strong>state transitions as they happen</strong>. Each one writes a candidate with context:</p>
+      <p><strong>research_then_implement</strong> &mdash; research events exist, then code changes with no errors. The agent learned something and applied it.</p>
+      <p><strong>fail_then_succeed</strong> &mdash; bash error, then code changes, then bash success. The classic error&rarr;fix&rarr;verify cycle.</p>
+      <p><strong>approach_reversal</strong> &mdash; Write to a file previously Edit-ed 3+ times. The agent gave up on incremental fixes and rewrote.</p>
+      <p><strong>cross_file_breadth</strong> &mdash; changes spanning 3+ directories. Integration knowledge.</p>
+      <p><strong>user_correction</strong> &mdash; same file edited before AND after a user message. The user redirected the approach.</p>
+      <p><strong>test_fix_cycle</strong> &mdash; test command fails, non-test code changes, test command succeeds.</p>
+      <p><strong>dependency_resolution</strong> &mdash; package manager error, config file changes, package command succeeds.</p>
+      <p><strong>security_hardening</strong> &mdash; security-related file changes combined with errors.</p>
+      <p><strong>infra_discovery</strong> &mdash; infrastructure file (Dockerfile, CI, nginx) changes after errors.</p>
+      <p><strong>migration_pattern</strong> &mdash; 5+ files across 2+ directories with config changes.</p>
+      <p>Each candidate is recorded once (deduped by pattern type). They sit in <code>candidates.jsonl</code> until Phase 2 reads them.</p>
     </div>
   </div>
 </div>
 
-<div class="diagram"><span class="dim">detect_bash_error(data)</span>
-
-<span class="highlight">tool_response</span> is dict?
-  ├─ <span class="green">exitCode != 0</span>  ──▶  <span class="red">ERROR</span>  (use stderr or output tail)
-  ├─ <span class="green">stderr non-empty</span> ──▶  <span class="red">ERROR</span>  (use stderr)
-  └─ neither          ──▶  <span class="green">SUCCESS</span>
-
-<span class="highlight">tool_response</span> is string?
-  ├─ <span class="green">ends with "exit code: N" where N≠0</span>  ──▶  <span class="red">ERROR</span>
-  └─ no exit code pattern               ──▶  <span class="green">SUCCESS</span>
-
-<span class="dim">No keyword lists. No "Error:", "Failed", "Exception" matching.</span>
-<span class="dim">Just exit codes and stderr — structural OS-level signals.</span></div>
-
-<!-- ═══════════════════════════════════════════════════ -->
-<div class="section-label"><span class="num">3</span> Layer 2 &mdash; Pattern Detection</div>
+<!-- =========================================================== -->
+<div class="section-label"><span class="num">3</span> Phase 2 &mdash; Weighted Importance Scoring</div>
 
 <div class="conversation">
   <div class="msg human">
     <div class="avatar">You</div>
     <div class="bubble">
-      <p>OK so Layer 1 just writes facts. How does the Stop hook turn those facts into "you should contribute"?</p>
+      <p>How does the stop hook decide if the accumulated knowledge is enough to prompt?</p>
     </div>
   </div>
 
   <div class="msg claude">
     <div class="avatar">CT</div>
     <div class="bubble">
-      <p>The Stop hook fires every time Claude finishes a response. It reads all the state files and checks for <strong>five structural patterns</strong>, in priority order. Each pattern is just a combination of state signals &mdash; no content analysis on anyone's messages.</p>
+      <p>Every pattern has a <strong>weight</strong>. The stop hook reads all state files and candidates, scores every pattern that matches, and sums the weights. If the total &ge; <strong>4.0</strong>, it prompts. If not, it stays silent.</p>
+      <p>This means a single error resolution (3.0) isn't enough. But an error resolution (3.0) plus temporal investment (1.0) crosses the threshold. A test fix cycle (2.0) plus dependency resolution (2.0) also crosses it. The threshold ensures we only prompt when something <em>substantial</em> happened.</p>
     </div>
   </div>
 </div>
 
-<!-- Pattern 1 -->
-<div class="scenario error">
-  <div class="scenario-header">
-    <span class="icon">&#x2716;</span> Pattern 1: Error Resolution <em>(highest confidence)</em>
-  </div>
-  <div class="scenario-body">
-    <p style="margin-bottom: 12px"><strong>Signals required:</strong> <code>errors.jsonl</code> has entries AND <code>changes.jsonl</code> has entries AND <code>resolutions.jsonl</code> has entries, AND they happened in temporal order (error &rarr; change &rarr; resolution).</p>
-    <div class="step"><span class="step-num">1</span><span>Bash command fails (exit code 1) &rarr; recorded in <code>errors.jsonl</code></span></div>
-    <div class="step"><span class="step-num">2</span><span>Claude edits a file to fix it &rarr; recorded in <code>changes.jsonl</code></span></div>
-    <div class="step"><span class="step-num">3</span><span>Bash command succeeds &rarr; recorded in <code>resolutions.jsonl</code></span></div>
-    <div class="step"><span class="step-num">4</span><span>Stop hook fires &rarr; sees error &lt; change &lt; resolution &rarr; <strong>prompts</strong></span></div>
-  </div>
-</div>
-
-<!-- Pattern 2 -->
-<div class="scenario research">
-  <div class="scenario-header">
-    <span class="icon">&#x1F50D;</span> Pattern 2: Workaround <em>(requires verification)</em>
-  </div>
-  <div class="scenario-body">
-    <p style="margin-bottom: 12px"><strong>Signals required:</strong> <code>errors.jsonl</code> + <code>research.jsonl</code> + <code>changes.jsonl</code> + <strong>verification</strong> (resolution exists OR no new errors after changes + 3 user turns).</p>
-    <div class="step"><span class="step-num">1</span><span>Something breaks &rarr; <code>errors.jsonl</code></span></div>
-    <div class="step"><span class="step-num">2</span><span>Claude searches the web for a solution &rarr; <code>research.jsonl</code></span></div>
-    <div class="step"><span class="step-num">3</span><span>Claude applies a fix from the research &rarr; <code>changes.jsonl</code></span></div>
-    <div class="step"><span class="step-num">4</span><span><strong>Verification:</strong> Bash succeeds &rarr; <code>resolutions.jsonl</code>, OR conversation continues without new errors</span></div>
-    <div class="step"><span class="step-num">5</span><span>Stop hook: errors + research + changes + verification = <strong>workaround confirmed</strong></span></div>
-  </div>
-</div>
-
-<div class="callout warning">
-  <strong>Why verification matters:</strong> Researching and applying a fix doesn't mean it works. Without verification, we'd prompt for contribution on a fix that might need amending 5 minutes later. We either need a successful test run (resolution) or enough conversation without new errors to be confident.
-</div>
-
-<!-- Pattern 3 -->
-<div class="scenario config">
-  <div class="scenario-header">
-    <span class="icon">&#x2699;</span> Pattern 3: Config Discovery <em>(requires verification)</em>
-  </div>
-  <div class="scenario-body">
-    <p style="margin-bottom: 12px"><strong>Signals required:</strong> Config file changed AFTER errors + <strong>verification</strong> (resolution exists OR no new errors + 3 user turns).</p>
-    <div class="step"><span class="step-num">1</span><span>Errors happen &rarr; <code>errors.jsonl</code></span></div>
-    <div class="step"><span class="step-num">2</span><span>Claude edits <code>tsconfig.json</code> or <code>nginx.conf</code> &rarr; <code>changes.jsonl</code> with <code>is_config: true</code></span></div>
-    <div class="step"><span class="step-num">3</span><span><strong>Verification:</strong> Bash succeeds or conversation continues without new errors</span></div>
-    <div class="step"><span class="step-num">4</span><span>Stop hook: config change after error + verification = <strong>configuration fix confirmed</strong></span></div>
-  </div>
-</div>
-
-<div class="conversation">
-  <div class="msg human">
-    <div class="avatar">You</div>
-    <div class="bubble">
-      <p>How does it know what a "config file" is?</p>
-    </div>
-  </div>
-
-  <div class="msg claude">
-    <div class="avatar">CT</div>
-    <div class="bubble">
-      <p>By file extension and name fragments. <code>session_state.py</code> has an <code>is_config_file()</code> function that checks for extensions like <code>.json</code>, <code>.yaml</code>, <code>.toml</code>, <code>.env</code>, <code>.ini</code>, and name fragments like <code>config</code>, <code>settings</code>, <code>docker</code>, <code>webpack</code>, <code>tsconfig</code>, <code>pyproject</code>, etc. This is structural &mdash; it's reading file paths, not file contents.</p>
-    </div>
-  </div>
-</div>
-
-<!-- Pattern 4 -->
-<div class="scenario success">
-  <div class="scenario-header">
-    <span class="icon">&#x1F504;</span> Pattern 4: Deep Iteration
-  </div>
-  <div class="scenario-body">
-    <p style="margin-bottom: 12px"><strong>Signals required:</strong> Same file edited 2+ times AND at least 2 user turns.</p>
-    <div class="step"><span class="step-num">1</span><span>Claude edits <code>api.py</code> &rarr; <code>changes.jsonl</code></span></div>
-    <div class="step"><span class="step-num">2</span><span>User responds (turn count increases) &rarr; <code>user_turn_count</code></span></div>
-    <div class="step"><span class="step-num">3</span><span>Claude edits <code>api.py</code> again &rarr; <code>changes.jsonl</code> (same file, 2nd entry)</span></div>
-    <div class="step"><span class="step-num">4</span><span>Stop hook: same file, multiple edits = <strong>iterative fix</strong></span></div>
-  </div>
-</div>
-
-<!-- Pattern 5 -->
-<div class="scenario success">
-  <div class="scenario-header">
-    <span class="icon">&#x1F4AC;</span> Pattern 5: Multi-turn Work <em>(catch-all)</em>
-  </div>
-  <div class="scenario-body">
-    <p style="margin-bottom: 12px"><strong>Signals required:</strong> 3+ user messages AND code changes exist.</p>
-    <p>This is the broadest pattern. If you've been going back and forth with Claude for 3+ messages and code was modified, <em>something</em> happened that might be worth saving. The prompt is gentle &mdash; Claude and the user decide.</p>
-  </div>
-</div>
-
-<!-- ═══════════════════════════════════════════════════ -->
-<div class="section-label"><span class="num">4</span> Post-Contribution Refinement</div>
-
-<div class="conversation">
-  <div class="msg human">
-    <div class="avatar">You</div>
-    <div class="bubble">
-      <p>What if I contribute a trace but then realize it's incomplete? Like I keep talking and discover more context?</p>
-    </div>
-  </div>
-
-  <div class="msg claude">
-    <div class="avatar">CT</div>
-    <div class="bubble">
-      <p>There's a <strong>6th pattern</strong> that takes priority over all others: <strong>post-contribution refinement</strong>.</p>
-      <p>When you call <code>contribute_trace</code>, the hook records the trace ID and snapshots the current user turn count. If you keep talking after that (more user turns than the snapshot), the Stop hook detects this and prompts for <strong>amendment</strong> instead of a new contribution.</p>
-    </div>
-  </div>
-</div>
-
-<div class="scenario config">
-  <div class="scenario-header">
-    <span class="icon">&#x270F;</span> Pattern 6: Post-Contribution Refinement <em>(highest priority)</em>
-  </div>
-  <div class="scenario-body">
-    <div class="step"><span class="step-num">1</span><span>You contribute a trace &rarr; <code>contributions.jsonl</code> gets trace ID, <code>user_turns_at_contribution</code> saves turn count (e.g., 5)</span></div>
-    <div class="step"><span class="step-num">2</span><span>You keep discussing &rarr; <code>user_turn_count</code> goes to 6, 7, 8...</span></div>
-    <div class="step"><span class="step-num">3</span><span>Stop hook: contributions exist AND turns (8) > snapshot (5) = <strong>"Would you like to amend?"</strong></span></div>
-  </div>
-</div>
+<table class="state-table">
+  <thead>
+    <tr>
+      <th>Weight</th>
+      <th>Pattern</th>
+      <th>What it means</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>3.0</code></td>
+      <td>error_resolution</td>
+      <td>Error &rarr; code change &rarr; successful verification</td>
+    </tr>
+    <tr>
+      <td><code>2.5</code></td>
+      <td>security_hardening</td>
+      <td>Security file changes after errors or audit tool success</td>
+    </tr>
+    <tr>
+      <td><code>2.5</code></td>
+      <td>user_correction</td>
+      <td>Same file edited before and after a user message</td>
+    </tr>
+    <tr>
+      <td><code>2.5</code></td>
+      <td>approach_reversal</td>
+      <td>Write (full rewrite) to file previously Edit-ed 3+ times</td>
+    </tr>
+    <tr>
+      <td><code>2.0</code></td>
+      <td>test_fix_cycle</td>
+      <td>Test fails &rarr; non-test code changes &rarr; test passes</td>
+    </tr>
+    <tr>
+      <td><code>2.0</code></td>
+      <td>dependency_resolution</td>
+      <td>Package manager errors &rarr; config changes &rarr; install succeeds</td>
+    </tr>
+    <tr>
+      <td><code>2.0</code></td>
+      <td>config_discovery</td>
+      <td>Config file changes that resolved errors</td>
+    </tr>
+    <tr>
+      <td><code>2.0</code></td>
+      <td>novelty_encounter</td>
+      <td>New language or domain in this project (cross-session)</td>
+    </tr>
+    <tr>
+      <td><code>2.0</code></td>
+      <td>infra_discovery</td>
+      <td>Dockerfile / CI / nginx / cloud config changes after errors</td>
+    </tr>
+    <tr>
+      <td><code>2.0</code></td>
+      <td>migration_pattern</td>
+      <td>5+ files across multiple directories + config changes</td>
+    </tr>
+    <tr>
+      <td><code>2.0</code></td>
+      <td>research_then_implement</td>
+      <td>Web search/fetch then code changes (no errors)</td>
+    </tr>
+    <tr>
+      <td><code>1.5</code></td>
+      <td>generation_effect</td>
+      <td>Solved without any external knowledge (no search, no traces)</td>
+    </tr>
+    <tr>
+      <td><code>1.5</code></td>
+      <td>cross_file_breadth</td>
+      <td>Changes spanning 3+ directories</td>
+    </tr>
+    <tr>
+      <td><code>1.5&ndash;2.0</code></td>
+      <td>iteration_depth</td>
+      <td>Same file edited 3+ times (scales with edit count)</td>
+    </tr>
+    <tr>
+      <td><code>1.5</code></td>
+      <td>workaround</td>
+      <td>Research + errors + changes (when error_resolution doesn't match)</td>
+    </tr>
+    <tr>
+      <td><code>0.5&ndash;1.0</code></td>
+      <td>temporal_investment</td>
+      <td>Long session with sustained activity (log-scaled)</td>
+    </tr>
+  </tbody>
+</table>
 
 <div class="callout principle">
-  <strong>Why this matters:</strong> This catches the common failure mode where a trace is submitted, the user pushes back or adds nuance ("but what about X?"), and the improved understanding never makes it back into the trace.
+  <strong>Temporal proximity compounding:</strong> Patterns that occur near high-signal events (error_resolution, approach_reversal, security_hardening) get a 0&ndash;30% boost. Inspired by synaptic tagging in neuroscience &mdash; memories formed close to significant events are consolidated more strongly. A config discovery that happens 2 minutes after an error resolution is boosted; the same discovery 30 minutes later is not.
 </div>
 
-<!-- ═══════════════════════════════════════════════════ -->
-<div class="section-label"><span class="num">5</span> Full Example: Debugging a Real Error</div>
+<!-- =========================================================== -->
+<div class="section-label"><span class="num">4</span> Somatic Intensity &mdash; Harder Knowledge Ranks Higher</div>
 
 <div class="conversation">
   <div class="msg human">
     <div class="avatar">You</div>
     <div class="bubble">
-      <p>Walk me through a complete example. What happens when I'm debugging a real problem?</p>
+      <p>Once a trace is contributed, does it matter how it was discovered?</p>
     </div>
   </div>
 
   <div class="msg claude">
     <div class="avatar">CT</div>
     <div class="bubble">
-      <p>Let's say you're setting up a Next.js project and the build fails because of a TypeScript path alias issue. Here's exactly what happens in the hooks:</p>
+      <p>Yes. This is inspired by <strong>Damasio's somatic marker hypothesis</strong> &mdash; the idea that emotions aren't opposed to rational decision-making but essential to it. Memories formed under intensity (frustration, surprise, relief) are recalled more readily.</p>
+      <p>When the stop hook prompts for contribution, it includes <strong>detection metadata</strong>: which pattern triggered it, how many errors occurred, how long the resolution took, how many iterations were needed. This metadata travels with the trace to the API.</p>
+      <p>The API computes a <strong>somatic_intensity</strong> score (0.0&ndash;1.0) from this metadata. A trace born from a 45-minute, 15-error security investigation gets intensity ~0.95. A 2-minute convenience finding gets ~0.25. The intensity <strong>permanently boosts search ranking</strong> by up to 30%.</p>
+      <p>Harder-won knowledge surfaces first. Always.</p>
     </div>
   </div>
 </div>
 
-<div class="diagram"><span class="yellow">Session State: /tmp/commontrace-sessions/abc123/</span>
+<div class="diagram"><span class="dim">Skill (stop hook)</span>                    <span class="dim">API (ingestion)</span>                <span class="dim">API (search)</span>
 
-<span class="dim">── Turn 1: User asks Claude to build the project ──</span>
+<span class="highlight">detection metadata</span>                  <span class="highlight">compute_somatic_intensity()</span>
+  detection_pattern: "error_resolution"
+  error_count: 7        ──────────▶   base: 0.6 (error_resolution)   ──▶ <span class="yellow">somatic_intensity = 0.86</span>
+  time_to_resolution: 23min           + 0.21 (7 errors)
+  iteration_count: 12                 + 0.05 (23 min)                    stored on trace forever
+                                                                         <span class="green">search boost: 1.0 + 0.3 * 0.86 = 1.26x</span></div>
 
-<span class="highlight">[UserPromptSubmit]</span>  user_turn_count: <span class="green">1</span>
-
-<span class="highlight">[PostToolUse Bash]</span>  <span class="dim">$ npm run build</span>
-  exit code: 1 → stderr detected
-  <span class="red">▸ errors.jsonl</span>  {"source":"bash","command":"npm run build",
-                     "output_tail":"...Cannot find module '@/lib/db'...","t":1000}
-
-  <span class="purple">▸ CommonTrace search</span> (query: last 200 chars of stderr)
-    → Found: "Next.js path aliases require baseUrl in tsconfig.json"
-    → Injected as additionalContext to Claude
-
-<span class="dim">── Turn 2: User says "try the fix from that trace" ──</span>
-
-<span class="highlight">[UserPromptSubmit]</span>  user_turn_count: <span class="green">2</span>
-
-<span class="highlight">[PostToolUse Edit]</span>  <span class="dim">tsconfig.json</span>
-  <span class="orange">▸ changes.jsonl</span>  {"tool":"Edit","file":"tsconfig.json",
-                     "is_config":<span class="purple">true</span>,"t":1020}
-
-<span class="dim">── Turn 3: Claude re-runs the build ──</span>
-
-<span class="highlight">[PostToolUse Bash]</span>  <span class="dim">$ npm run build</span>
-  exit code: 0 → success + previous errors exist
-  <span class="green">▸ resolutions.jsonl</span>  {"source":"bash","command":"npm run build",
-                        "errors_before":1,"t":1040}
-
-<span class="highlight">[Stop hook fires]</span>
-  reads errors.jsonl:      <span class="red">1 error</span>  (t=1000)
-  reads changes.jsonl:     <span class="orange">1 change</span> (t=1020, is_config=true)
-  reads resolutions.jsonl: <span class="green">1 resolution</span> (t=1040)
-
-  <span class="dim">Pattern check:</span>
-    error_resolution: 1000 < 1020 ≤ 1040 ✓  <span class="green">MATCH</span>
-    config_discovery: config change after error ✓  <span class="green">MATCH</span>
-
-  <span class="dim">Priority: error_resolution wins (checked first after post-contribution)</span>
-
-  <span class="yellow">▸ Output:</span> "You went through an error→fix→verify cycle
-              (1 error, 1 change, 1 verification).
-              Would you like to contribute?"</div>
-
-<!-- ═══════════════════════════════════════════════════ -->
-<div class="section-label"><span class="num">6</span> Anti-Spam: Guards &amp; Cooldowns</div>
+<!-- =========================================================== -->
+<div class="section-label"><span class="num">5</span> Smart Triggers &mdash; When to Search</div>
 
 <div class="conversation">
   <div class="msg human">
     <div class="avatar">You</div>
     <div class="bubble">
-      <p>Won't this fire constantly during a long session? Every time Claude edits a file?</p>
+      <p>CommonTrace also auto-searches, right? When?</p>
     </div>
   </div>
 
   <div class="msg claude">
     <div class="avatar">CT</div>
     <div class="bubble">
-      <p>Two guards prevent that:</p>
-      <p><strong>1. Topic dedup:</strong> The first 200 characters of Claude's response are hashed. If the same hash was already prompted for, it's skipped forever. Stored as <code>dedup-{session_key}-{hash}</code>. This means each unique resolution is prompted exactly once.</p>
-      <p><strong>2. Stop hook guard:</strong> The hook data includes <code>stop_hook_active</code>. If true, it means we're already inside a Stop hook prompt &mdash; skip to avoid recursion.</p>
-      <p>There's no time-based cooldown. The dedup is sufficient &mdash; a cooldown would only block legitimate new patterns that happen to occur within a time window.</p>
-      <p>The CommonTrace <em>search</em> (on errors) has its own separate 30-second cooldown to avoid hammering the API during rapid error-fix-error cycles.</p>
+      <p>Four triggers, each with independent cooldowns:</p>
+      <p><strong>1. Bash error</strong> (30s cooldown) &mdash; when a command fails, searches with the last 200 chars of error output. The search engine handles relevance.</p>
+      <p><strong>2. Error recurrence</strong> (60s cooldown) &mdash; uses fuzzy signature matching against previous sessions. If the same type of error appeared before (even at different line numbers or file paths), it fires with enriched context. This is cross-session memory.</p>
+      <p><strong>3. Domain entry</strong> (120s cooldown) &mdash; when you edit a file in a language not previously seen in this project (e.g., first <code>.rs</code> file in a Python project), searches for common patterns and gotchas in that language.</p>
+      <p><strong>4. Pre-code</strong> (180s cooldown) &mdash; when creating a brand-new file (Write to a path that doesn't exist yet), searches for implementation patterns for that file type.</p>
     </div>
   </div>
 </div>
 
-<div class="diagram"><span class="dim">Stop hook entry →</span>
-
-  stop_hook_active?     ──<span class="red"> YES → return</span>  <span class="dim">(avoid recursion)</span>
-  no assistant message? ──<span class="red"> YES → return</span>
-  same topic hash?      ──<span class="red"> YES → return</span>  <span class="dim">(already prompted for this)</span>
-  no patterns found?    ──<span class="red"> YES → return</span>
-
-  <span class="green">All guards pass → pick highest-priority pattern → output prompt</span>
-  <span class="dim">No time cooldown. Dedup ensures each resolution prompts exactly once.</span></div>
-
-<!-- ═══════════════════════════════════════════════════ -->
-<div class="section-label"><span class="num">7</span> Why No Keyword Matching</div>
+<!-- =========================================================== -->
+<div class="section-label"><span class="num">6</span> Cross-Session Memory</div>
 
 <div class="conversation">
   <div class="msg human">
     <div class="avatar">You</div>
     <div class="bubble">
-      <p>Earlier versions had keyword lists like "thanks", "perfect", "still broken" to detect user mood. Why was that removed?</p>
+      <p>You mentioned "previous sessions." How does it remember across sessions?</p>
     </div>
   </div>
 
   <div class="msg claude">
     <div class="avatar">CT</div>
     <div class="bubble">
-      <p>Because there are infinite ways to express the same thing. A user who's happy might say "finally omg that took forever" &mdash; no keyword list catches that. A user who's frustrated might say "im gonna start to get mad" &mdash; doesn't match "still broken" or "not working".</p>
-      <p>Trying to understand human intent through string matching is building a bad NLU system. The hook is a Python script with a 5-second timeout &mdash; it <em>cannot</em> understand language.</p>
-      <p>What it <em>can</em> do: read structural metadata. Exit codes don't lie. File paths don't lie. Turn counts don't lie. Timestamps don't lie. These signals are deterministic and complete.</p>
-      <p>Claude itself (the LLM) is the one that understands the discussion. The hook just triggers at the right moments. Claude decides if it's worth contributing. The user confirms.</p>
+      <p>A SQLite database at <code>~/.commontrace/local.db</code> persists across sessions. The session-start hook opens it and writes bridge files to the temporary state directory so Phase 1 hooks can read them.</p>
+    </div>
+  </div>
+</div>
+
+<table class="state-table">
+  <thead>
+    <tr>
+      <th>Table</th>
+      <th>What it stores</th>
+      <th>Used for</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>projects</code></td>
+      <td>Working directory, primary language/framework, session count</td>
+      <td>Project context detection, novelty scoring</td>
+    </tr>
+    <tr>
+      <td><code>sessions</code></td>
+      <td>Per-session stats (errors, resolutions, contributions)</td>
+      <td>Cross-session trend analysis</td>
+    </tr>
+    <tr>
+      <td><code>entities</code></td>
+      <td>Languages, frameworks, domains seen per project</td>
+      <td>Domain entry trigger (is this language new?)</td>
+    </tr>
+    <tr>
+      <td><code>events</code></td>
+      <td>Migrated JSONL events from completed sessions</td>
+      <td>Long-term event history</td>
+    </tr>
+    <tr>
+      <td><code>error_signatures</code></td>
+      <td>Fuzzy error signatures (normalized: paths, line numbers, UUIDs stripped)</td>
+      <td>Error recurrence detection via Jaccard similarity</td>
+    </tr>
+    <tr>
+      <td><code>trigger_feedback</code></td>
+      <td>Which triggers fired, which led to trace consumption</td>
+      <td>Trigger effectiveness tracking (reinforcement)</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="callout key">
+  <strong>Fuzzy error matching:</strong> The error signature function strips variable parts (file paths become basenames, line numbers become <code>N</code>, UUIDs become <code>UUID</code>, timestamps become <code>TIMESTAMP</code>). Then Jaccard similarity on tokens finds matches above 75%. The same <code>ModuleNotFoundError</code> at different import paths in different sessions will match.
+</div>
+
+<!-- =========================================================== -->
+<div class="section-label"><span class="num">7</span> Full Example: A Real Session</div>
+
+<div class="conversation">
+  <div class="msg human">
+    <div class="avatar">You</div>
+    <div class="bubble">
+      <p>Walk me through a complete example with the new scoring system.</p>
+    </div>
+  </div>
+
+  <div class="msg claude">
+    <div class="avatar">CT</div>
+    <div class="bubble">
+      <p>You're deploying a FastAPI app. Docker build fails because of a dependency conflict. Here's the full trace through both phases:</p>
+    </div>
+  </div>
+</div>
+
+<div class="diagram"><span class="yellow">Phase 1: Real-time events in /tmp/commontrace-sessions/abc123/</span>
+
+<span class="highlight">[UserPromptSubmit]</span>  user_turns.jsonl: <span class="green">{"turn": 1, "t": 1000}</span>
+
+<span class="highlight">[PostToolUse Bash]</span>  <span class="dim">$ docker build .</span>
+  exit code: 1
+  <span class="red">errors.jsonl</span> ← {"command":"docker build .","output_tail":"...pip install failed...","t":1010}
+  <span class="purple">trigger: bash_error</span> → search CommonTrace → no results
+
+<span class="highlight">[PostToolUse Edit]</span>  <span class="dim">requirements.txt</span>
+  <span class="orange">changes.jsonl</span> ← {"tool":"Edit","file":"requirements.txt","is_config":true,"t":1030}
+
+<span class="highlight">[PostToolUse Edit]</span>  <span class="dim">Dockerfile</span>
+  <span class="orange">changes.jsonl</span> ← {"tool":"Edit","file":"Dockerfile","is_config":true,"t":1040}
+  <span class="purple">candidate detected: infra_discovery</span>
+    {"pattern":"infra_discovery","infra_files":["Dockerfile"],"error_count":1,"t":1040}
+
+<span class="highlight">[PostToolUse Bash]</span>  <span class="dim">$ pip install -r requirements.txt</span>
+  exit code: 0 + previous errors exist
+  <span class="green">resolutions.jsonl</span> ← {"command":"pip install -r requirements.txt","errors_before":1,"t":1060}
+  <span class="purple">candidate detected: dependency_resolution</span>
+    {"pattern":"dependency_resolution","error_count":1,
+     "config_files":["requirements.txt"],"t":1060}
+
+<span class="highlight">[PostToolUse Bash]</span>  <span class="dim">$ docker build .</span>
+  exit code: 0
+  <span class="green">resolutions.jsonl</span> ← {"command":"docker build .","errors_before":1,"t":1100}
+
+
+<span class="yellow">Phase 2: Stop hook scores everything</span>
+
+  <span class="dim">Pattern                  Weight   Evidence</span>
+  <span class="red">error_resolution</span>         <span class="yellow">3.0</span>      1 error → 2 changes → 2 resolutions
+  <span class="purple">config_discovery</span>         <span class="yellow">2.0</span>      requirements.txt + Dockerfile after error
+  <span class="orange">dependency_resolution</span>    <span class="yellow">2.0</span>      pip error → config fix → pip success
+  <span class="highlight">infra_discovery</span>          <span class="yellow">2.0</span>      Dockerfile changes after errors
+  <span class="dim">temporal_investment</span>      <span class="yellow">0.6</span>      ~1.5 min, 5 events
+                           ─────
+  <span class="green">Total: 9.6</span>  (threshold: 4.0)  →  <span class="green">PROMPT</span>
+
+  <span class="yellow">Prompt:</span> "You resolved 1 error(s) through 2 change(s) and verified
+           the fix. Error resolutions are high-value knowledge.
+           (Session involved: infra discovery, dependency resolution,
+           error resolution)
+           Would you like to contribute to CommonTrace?
+           Include this in metadata_json: {"detection_pattern":
+           "error_resolution", "error_count": 1,
+           "time_to_resolution_minutes": 1.5, "iteration_count": 2}"</div>
+
+<!-- =========================================================== -->
+<div class="section-label"><span class="num">8</span> Anti-Spam: Why It Doesn't Over-Prompt</div>
+
+<div class="conversation">
+  <div class="msg human">
+    <div class="avatar">You</div>
+    <div class="bubble">
+      <p>Won't it fire constantly if the score is high?</p>
+    </div>
+  </div>
+
+  <div class="msg claude">
+    <div class="avatar">CT</div>
+    <div class="bubble">
+      <p>Three guards:</p>
+      <p><strong>1. Score dedup:</strong> The score bucket + top pattern + evidence is hashed. Each unique combination prompts exactly once per session. If you keep working and the score goes from 9.6 to 10.1, it won't re-prompt because the integer bucket (9) and pattern (error_resolution) haven't changed.</p>
+      <p><strong>2. Stop hook guard:</strong> If <code>stop_hook_active</code> is true, the hook exits immediately. No recursion.</p>
+      <p><strong>3. Post-contribution priority:</strong> If you already contributed a trace AND kept talking, the hook prompts for <strong>amendment</strong> instead of a new contribution. It checks if user turns increased since the contribution.</p>
+    </div>
+  </div>
+</div>
+
+<!-- =========================================================== -->
+<div class="section-label"><span class="num">9</span> Why No Keyword Matching</div>
+
+<div class="conversation">
+  <div class="msg human">
+    <div class="avatar">You</div>
+    <div class="bubble">
+      <p>Does it read my messages to figure out if I'm happy or frustrated?</p>
+    </div>
+  </div>
+
+  <div class="msg claude">
+    <div class="avatar">CT</div>
+    <div class="bubble">
+      <p><strong>No.</strong> The hooks never read user messages or Claude's responses. Everything is structural &mdash; exit codes, file paths, timestamps, tool sequences.</p>
+      <p>This is a deliberate design decision. Keyword lists ("thanks", "perfect", "still broken") are brittle and culturally biased. A user who says "finally omg" is happy; "im gonna lose it" is frustrated &mdash; no keyword list catches these. And the hook is a Python script with a 5-second timeout. It cannot understand language.</p>
+      <p>What it <em>can</em> read: <strong>structural metadata</strong>. Exit codes don't lie. File paths don't lie. Timestamps don't lie. The <code>user_correction</code> pattern detects that a file was changed before and after a user message &mdash; it doesn't need to know <em>what</em> the user said, only <em>that</em> they said something and the approach changed.</p>
     </div>
   </div>
 </div>
 
 <div class="callout key">
-  <strong>The design principle:</strong> Hooks are triggers, not analyzers. They detect WHEN to prompt using reliable structural signals. Claude decides IF and WHAT to contribute. The hook fires broadly &mdash; false positives are cheap (Claude says "skip"), false negatives lose knowledge forever.
+  <strong>The design principle:</strong> Hooks detect WHEN to prompt using structural signals. Claude (the LLM) decides IF the knowledge is worth sharing. The user confirms. Each layer does what it's best at.
 </div>
 
-<!-- ═══════════════════════════════════════════════════ -->
-<div class="section-label"><span class="num">8</span> What's a Trace vs. a Preference</div>
+<!-- =========================================================== -->
+<div class="section-label"><span class="num">10</span> Trace vs. Preference</div>
 
 <div class="conversation">
   <div class="msg human">
     <div class="avatar">You</div>
     <div class="bubble">
-      <p>When Claude offers to contribute, how does it know what belongs in CommonTrace vs. what should stay in my local CLAUDE.md?</p>
+      <p>How do I know if something belongs in CommonTrace or my local CLAUDE.md?</p>
     </div>
   </div>
 
   <div class="msg claude">
     <div class="avatar">CT</div>
     <div class="bubble">
-      <p>The test is <strong>transferability</strong>: would this help an agent working on a completely different codebase?</p>
-      <p><strong>Trace</strong> (goes to CommonTrace): "Use <code>pool_pre_ping=True</code> with SQLAlchemy because connections go stale after idle timeout." &mdash; This helps anyone using SQLAlchemy, anywhere.</p>
-      <p><strong>Trace without reasoning</strong> (still goes to CommonTrace): "Always A/B test email subject lines." &mdash; A marketing expert may not explain why, but it's transferable domain expertise.</p>
-      <p><strong>Preference</strong> (stays in CLAUDE.md): "Use tabs not spaces" or "Name files in kebab-case." &mdash; Project-specific style. No one else benefits.</p>
-    </div>
-  </div>
-
-  <div class="msg human">
-    <div class="avatar">You</div>
-    <div class="bubble">
-      <p>So traces don't need a "because"?</p>
-    </div>
-  </div>
-
-  <div class="msg claude">
-    <div class="avatar">CT</div>
-    <div class="bubble">
-      <p>Correct. The "because" rule is <strong>guidance</strong>, not a gate. Expert knowledge is often shared as convention without justification &mdash; "we always do X" &mdash; and it's still worth recording. The person knows something the agent doesn't, even if they can't articulate why. The hook never filters contributions based on whether causal reasoning was provided.</p>
+      <p>The test is <strong>transferability</strong>: would this help an agent on a completely different codebase?</p>
+      <p><strong>Trace</strong>: "Use <code>pool_pre_ping=True</code> with SQLAlchemy &mdash; connections go stale after idle timeout." Anyone using SQLAlchemy benefits.</p>
+      <p><strong>Preference</strong>: "Use tabs not spaces" or "Name files in kebab-case." Project-specific. No one else benefits.</p>
+      <p>Expert knowledge without explanation still counts: "Always A/B test email subject lines" is transferable even without a "because." The hook never filters based on whether reasoning was provided.</p>
     </div>
   </div>
 </div>
 
-<!-- ═══════════════════════════════════════════════════ -->
-<div class="section-label"><span class="num">9</span> Auto-Search on Errors</div>
+<!-- =========================================================== -->
+<div class="section-label"><span class="num">11</span> The Complete Hook Map</div>
 
-<div class="conversation">
-  <div class="msg human">
-    <div class="avatar">You</div>
-    <div class="bubble">
-      <p>You mentioned CommonTrace also searches automatically when errors happen. How?</p>
-    </div>
-  </div>
-
-  <div class="msg claude">
-    <div class="avatar">CT</div>
-    <div class="bubble">
-      <p>When the Bash handler in <code>post_tool_use.py</code> detects an error (via exit code/stderr), it does two things:</p>
-      <p><strong>1.</strong> Records the error to <code>errors.jsonl</code> (for the Stop hook).</p>
-      <p><strong>2.</strong> Searches CommonTrace with the last 200 characters of the error output. The search engine handles relevance &mdash; the hook doesn't try to extract the "important" error line.</p>
-      <p>If matches are found, they're injected as <code>additionalContext</code> into Claude's next response. Claude sees something like: <em>"CommonTrace found relevant traces for this error: [1] Next.js path aliases require baseUrl... (ID: abc-123)"</em></p>
-      <p>The search has a <strong>30-second cooldown</strong> so rapid error-fix-error cycles don't hammer the API.</p>
-    </div>
-  </div>
-</div>
-
-<!-- ═══════════════════════════════════════════════════ -->
-<div class="section-label"><span class="num">10</span> The Complete Hook Map</div>
-
-<div class="diagram"><span class="yellow">hooks.json — 6 hook registrations across 5 event types</span>
+<div class="diagram"><span class="yellow">hooks.json registrations</span>
 
 <span class="highlight">SessionStart</span>
-  └─ <span class="green">session_start.py</span>      <span class="dim">10s timeout</span>
-     Auto-provision API key, detect project context,
-     search CommonTrace for relevant traces
+  └─ <span class="green">session_start.py</span>  <span class="dim">10s</span>
+     API key provisioning, project context detection,
+     open local SQLite store, initial CommonTrace search
 
 <span class="highlight">PostToolUse</span>
-  ├─ matcher: <span class="orange">Bash</span>         → <span class="green">post_tool_use.py</span>  <span class="dim">5s</span>
-  │  Error detection (exit code/stderr), state recording,
-  │  CommonTrace search on errors, resolution tracking
-  │
-  ├─ matcher: <span class="orange">Write</span>        → <span class="green">post_tool_use.py</span>  <span class="dim">3s</span>
-  ├─ matcher: <span class="orange">Edit</span>         → <span class="green">post_tool_use.py</span>  <span class="dim">3s</span>
-  └─ matcher: <span class="orange">NotebookEdit</span> → <span class="green">post_tool_use.py</span>  <span class="dim">3s</span>
-     File change recording, config file detection
+  ├─ <span class="orange">Bash</span>                    → <span class="green">post_tool_use.py</span>  <span class="dim">5s</span>
+  ├─ <span class="orange">Write / Edit / Notebook</span>  → <span class="green">post_tool_use.py</span>  <span class="dim">3s</span>
+  ├─ <span class="orange">WebSearch / WebFetch</span>     → <span class="green">post_tool_use.py</span>  <span class="dim">3s</span>
+  └─ <span class="orange">mcp__*__get_trace</span>       → <span class="green">post_tool_use.py</span>  <span class="dim">3s</span>
+     Records state + detects candidates + auto-searches
+     on errors + tracks trace consumption (reinforcement)
 
 <span class="highlight">PostToolUseFailure</span>         → <span class="green">post_tool_failure.py</span>  <span class="dim">3s</span>
-  Records any tool execution failure to errors.jsonl
+  Records tool failures to errors.jsonl
 
 <span class="highlight">UserPromptSubmit</span>           → <span class="green">user_prompt.py</span>  <span class="dim">3s</span>
-  Increments user turn counter (pure structural)
+  Turn counter + timestamp (for user_correction detection)
 
 <span class="highlight">Stop</span>                       → <span class="green">stop.py</span>  <span class="dim">5s</span>
-  Reads all state, detects patterns, prompts for
-  contribution or amendment</div>
+  Reads all state, scores 16 patterns, prompts if &ge; 4.0,
+  persists session to SQLite, reports trigger stats to API</div>
 
-<!-- ═══════════════════════════════════════════════════ -->
-<div class="section-label"><span class="num">11</span> File Inventory</div>
+<!-- =========================================================== -->
+<div class="section-label"><span class="num">12</span> Search Ranking &mdash; How Traces Surface</div>
 
-<table class="state-table">
-  <thead>
-    <tr>
-      <th>File</th>
-      <th>Layer</th>
-      <th>Role</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td><code>session_state.py</code></td>
-      <td>Shared</td>
-      <td>State directory management, JSONL read/write, counters, config file detection</td>
-    </tr>
-    <tr>
-      <td><code>session_start.py</code></td>
-      <td>Setup</td>
-      <td>API key provisioning, MCP config, project context detection, initial search</td>
-    </tr>
-    <tr>
-      <td><code>post_tool_use.py</code></td>
-      <td>Layer 1</td>
-      <td>Handles Bash/Write/Edit/WebSearch/contribute_trace &mdash; records state + searches on errors</td>
-    </tr>
-    <tr>
-      <td><code>post_tool_failure.py</code></td>
-      <td>Layer 1</td>
-      <td>Records tool failures to errors.jsonl</td>
-    </tr>
-    <tr>
-      <td><code>user_prompt.py</code></td>
-      <td>Layer 1</td>
-      <td>Increments user turn counter</td>
-    </tr>
-    <tr>
-      <td><code>stop.py</code></td>
-      <td>Layer 2</td>
-      <td>Reads state, detects 6 patterns, prompts contribution/amendment</td>
-    </tr>
-    <tr>
-      <td><code>hooks.json</code></td>
-      <td>Config</td>
-      <td>Registers all hooks with matchers and timeouts</td>
-    </tr>
-    <tr>
-      <td><code>SKILL.md</code></td>
-      <td>Interface</td>
-      <td>MCP tool descriptions, usage guidelines for the agent</td>
-    </tr>
-  </tbody>
-</table>
+<div class="conversation">
+  <div class="msg human">
+    <div class="avatar">You</div>
+    <div class="bubble">
+      <p>When I search, what determines which traces appear first?</p>
+    </div>
+  </div>
+
+  <div class="msg claude">
+    <div class="avatar">CT</div>
+    <div class="bubble">
+      <p>Nine factors multiplied together. Each one is a different lens on "is this trace useful right now?"</p>
+    </div>
+  </div>
+</div>
+
+<div class="diagram"><span class="yellow">Search Ranking Formula</span>
+
+score = <span class="highlight">similarity</span> * <span class="green">trust</span> * <span class="orange">depth</span> * <span class="purple">decay</span> * <span class="highlight">context</span> * <span class="green">convergence</span> * <span class="orange">temperature</span> * <span class="purple">validity</span> * <span class="yellow">somatic</span>
+
+<span class="highlight">similarity</span>    1 - cosine_distance(query, trace embedding)   <span class="dim">How close to what you asked</span>
+<span class="green">trust</span>         log1p(trust_score + 1)                        <span class="dim">Community votes</span>
+<span class="orange">depth</span>         1 + 0.1 * depth_score                         <span class="dim">Trace richness (0-4)</span>
+<span class="purple">decay</span>         exp(-0.693 * days / half_life)                 <span class="dim">Freshness (retrieved = reset)</span>
+<span class="highlight">context</span>       1 + 0.3 * alignment(searcher, trace)            <span class="dim">Same language/framework?</span>
+<span class="green">convergence</span>   1 + 0.05 * (4 - convergence_level)              <span class="dim">Universal knowledge bonus</span>
+<span class="orange">temperature</span>   HOT=1.15, WARM=1.05, COOL=1.0, COLD=0.85       <span class="dim">Recent activity</span>
+<span class="purple">validity</span>      0.5 if expired, 1.0 otherwise                  <span class="dim">Bi-temporal validity</span>
+<span class="yellow">somatic</span>       1 + 0.3 * somatic_intensity                    <span class="dim">How hard-won (0.0-1.0)</span></div>
+
+<div class="callout warning">
+  <strong>Spreading activation:</strong> After ranking, the top results' graph neighbors get a boost. If Trace A is highly ranked and has a RELATED_TO relationship with Trace B, then B gets pulled into results even if it didn't match the query directly. Knowledge travels through connections.
+</div>
 
 <footer>
   CommonTrace &mdash; Shared Knowledge Base for AI Coding Agents<br>
