@@ -176,9 +176,13 @@ def detect_context(cwd: str) -> str | None:
     return " ".join(parts)
 
 
-def search_commontrace(query: str, language: str, api_key: str) -> list[dict]:
+def search_commontrace(query: str, language: str, api_key: str,
+                       context: dict | None = None) -> list[dict]:
     base_url = os.environ.get("COMMONTRACE_API_BASE_URL", API_BASE).rstrip("/")
-    payload = json.dumps({"q": query, "tags": [language], "limit": 3}).encode("utf-8")
+    body: dict = {"q": query, "tags": [language], "limit": 3}
+    if context:
+        body["context"] = context
+    payload = json.dumps(body).encode("utf-8")
 
     req = urllib.request.Request(
         f"{base_url}/api/v1/traces/search",
@@ -252,8 +256,39 @@ def main() -> None:
     if not language:
         return
 
-    # Step 3: Search CommonTrace
-    results = search_commontrace(query, language, api_key)
+    # Step 2b: Persistent local store — register project + build context
+    context_dict = None
+    session_id = data.get("session_id") or str(os.getppid())
+    try:
+        from local_store import _get_conn, ensure_project, start_session, get_project_context
+        conn = _get_conn()
+        # Detect framework for the project record
+        framework = None
+        if query:
+            for fw in ("fastapi", "django", "flask", "react", "next", "express", "vue"):
+                if fw in query:
+                    framework = fw
+                    break
+        project_id = ensure_project(conn, cwd, language, framework)
+        start_session(conn, session_id, project_id)
+        context_dict = get_project_context(conn, cwd)
+        conn.close()
+
+        # Write bridge files for Layer 1 hooks
+        from session_state import get_state_dir
+        state_dir = get_state_dir(data)
+        try:
+            (state_dir / "project_id").write_text(str(project_id), encoding="utf-8")
+            if context_dict:
+                (state_dir / "context_fingerprint.json").write_text(
+                    json.dumps(context_dict), encoding="utf-8")
+        except OSError:
+            pass
+    except Exception:
+        context_dict = None
+
+    # Step 3: Search CommonTrace (with context if available)
+    results = search_commontrace(query, language, api_key, context_dict)
 
     if results:
         formatted = [f"{i + 1}. {format_result(r)}" for i, r in enumerate(results)]

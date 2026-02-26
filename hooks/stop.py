@@ -198,6 +198,52 @@ def detect_patterns(state_dir: Path) -> dict:
     return patterns
 
 
+def _persist_session(data: dict, state_dir: Path) -> None:
+    """Migrate session data to persistent SQLite store."""
+    try:
+        from local_store import (
+            _get_conn, migrate_jsonl_events, end_session, record_entity,
+        )
+        conn = _get_conn()
+        session_id = data.get("session_id") or str(os.getppid())
+
+        # Migrate JSONL events into SQLite
+        migrate_jsonl_events(conn, session_id, state_dir)
+
+        # Record session stats
+        errors = read_events(state_dir, "errors.jsonl")
+        resolutions = read_events(state_dir, "resolutions.jsonl")
+        contributions = read_events(state_dir, "contributions.jsonl")
+        end_session(conn, session_id, {
+            "error_count": len(errors),
+            "resolution_count": len(resolutions),
+            "contribution_count": len(contributions),
+        })
+
+        # Extract entities from changes (languages from file extensions)
+        project_id_path = state_dir / "project_id"
+        if project_id_path.exists():
+            project_id = int(project_id_path.read_text(encoding="utf-8").strip())
+            changes = read_events(state_dir, "changes.jsonl")
+            seen_langs: set[str] = set()
+            for change in changes:
+                file_path = change.get("file", "")
+                ext = Path(file_path).suffix.lower()
+                lang_map = {
+                    ".py": "python", ".ts": "typescript", ".tsx": "typescript",
+                    ".jsx": "javascript", ".js": "javascript", ".go": "go",
+                    ".rs": "rust", ".java": "java", ".rb": "ruby",
+                }
+                lang = lang_map.get(ext)
+                if lang and lang not in seen_langs:
+                    record_entity(conn, project_id, "language", lang)
+                    seen_langs.add(lang)
+
+        conn.close()
+    except Exception:
+        pass  # Graceful degradation — never block session end
+
+
 def main() -> None:
     try:
         raw = sys.stdin.read()
@@ -211,6 +257,10 @@ def main() -> None:
     session_key = get_session_key(data)
 
     state_dir = get_state_dir(data)
+
+    # Persist session data to SQLite before pattern detection
+    _persist_session(data, state_dir)
+
     patterns = detect_patterns(state_dir)
 
     if not patterns:

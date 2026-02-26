@@ -39,8 +39,13 @@ from session_state import (
 
 CONFIG_FILE = Path.home() / ".commontrace" / "config.json"
 API_BASE = "https://api.commontrace.org"
-COOLDOWN_FILE = Path("/tmp/commontrace-search-cooldown")
-COOLDOWN_SECONDS = 30
+COOLDOWN_DIR = Path("/tmp/commontrace-cooldowns")
+
+EXTENSION_TO_LANGUAGE = {
+    ".py": "python", ".ts": "typescript", ".tsx": "typescript",
+    ".jsx": "javascript", ".js": "javascript", ".go": "go",
+    ".rs": "rust", ".java": "java", ".rb": "ruby",
+}
 
 
 def load_api_key() -> str:
@@ -53,30 +58,39 @@ def load_api_key() -> str:
     return os.environ.get("COMMONTRACE_API_KEY", "")
 
 
-def is_search_on_cooldown() -> bool:
+def is_on_cooldown(trigger_name: str, seconds: int) -> bool:
+    """Per-trigger cooldown check."""
+    path = COOLDOWN_DIR / f"{trigger_name}.ts"
     try:
-        if COOLDOWN_FILE.exists():
-            last = float(COOLDOWN_FILE.read_text(encoding="utf-8"))
-            if time.time() - last < COOLDOWN_SECONDS:
+        if path.exists():
+            last = float(path.read_text(encoding="utf-8"))
+            if time.time() - last < seconds:
                 return True
     except (ValueError, OSError):
         pass
     return False
 
 
-def set_search_cooldown() -> None:
+def set_cooldown(trigger_name: str) -> None:
+    """Set cooldown timestamp for a trigger."""
+    COOLDOWN_DIR.mkdir(parents=True, exist_ok=True)
     try:
-        COOLDOWN_FILE.write_text(str(time.time()), encoding="utf-8")
+        (COOLDOWN_DIR / f"{trigger_name}.ts").write_text(
+            str(time.time()), encoding="utf-8")
     except OSError:
         pass
 
 
-def search_commontrace(query: str, api_key: str) -> list[dict]:
+def search_commontrace(query: str, api_key: str,
+                       context: dict | None = None) -> list[dict]:
     import urllib.error
     import urllib.request
 
     base_url = os.environ.get("COMMONTRACE_API_BASE_URL", API_BASE).rstrip("/")
-    payload = json.dumps({"q": query, "limit": 3}).encode("utf-8")
+    body: dict = {"q": query, "limit": 3}
+    if context:
+        body["context"] = context
+    payload = json.dumps(body).encode("utf-8")
 
     req = urllib.request.Request(
         f"{base_url}/api/v1/traces/search",
@@ -177,12 +191,17 @@ def handle_bash(data: dict, state_dir: Path) -> dict | None:
             "output_tail": error_text[:500],
         })
 
+        # Check for error recurrence in local store (takes priority)
+        recurrence_output = _check_error_recurrence(error_text, state_dir)
+        if recurrence_output:
+            return recurrence_output
+
         # Search CommonTrace with raw error output (let search engine
         # handle relevance — no keyword extraction needed)
-        if not is_search_on_cooldown():
+        if not is_on_cooldown("bash_error", 30):
             api_key = load_api_key()
             if api_key:
-                set_search_cooldown()
+                set_cooldown("bash_error")
                 # Use last 200 chars as search query
                 query = error_text.strip()[-200:]
                 if query:
@@ -214,23 +233,32 @@ def handle_bash(data: dict, state_dir: Path) -> dict | None:
     return None
 
 
-def handle_code_change(data: dict, state_dir: Path) -> None:
-    """Handle Write/Edit/NotebookEdit: record file changes."""
+def handle_code_change(data: dict, state_dir: Path) -> dict | None:
+    """Handle Write/Edit/NotebookEdit: record file changes + smart triggers."""
     tool_input = data.get("tool_input", {})
     if not isinstance(tool_input, dict):
-        return
+        return None
 
     file_path = tool_input.get("file_path", "")
     if not file_path:
-        return
+        return None
 
     tool_name = data.get("tool_name", "")
+
+    # Check pre-code trigger BEFORE recording change (file may not exist yet)
+    trigger_output = _check_pre_code(file_path, tool_name)
 
     append_event(state_dir, "changes.jsonl", {
         "tool": tool_name,
         "file": file_path,
         "is_config": is_config_file(file_path),
     })
+
+    # Check domain entry trigger after recording
+    if trigger_output is None:
+        trigger_output = _check_domain_entry(file_path, state_dir)
+
+    return trigger_output
 
 
 def handle_research(data: dict, state_dir: Path) -> None:
@@ -246,6 +274,149 @@ def handle_research(data: dict, state_dir: Path) -> None:
         "tool": tool_name,
         "query": str(query)[:200],
     })
+
+
+def _read_project_id(state_dir: Path) -> int | None:
+    """Read project_id bridge file written by session_start."""
+    try:
+        return int((state_dir / "project_id").read_text(encoding="utf-8").strip())
+    except (ValueError, OSError, FileNotFoundError):
+        return None
+
+
+def _read_context_fingerprint(state_dir: Path) -> dict | None:
+    """Read context fingerprint bridge file written by session_start."""
+    try:
+        return json.loads(
+            (state_dir / "context_fingerprint.json").read_text(encoding="utf-8")
+        )
+    except (json.JSONDecodeError, OSError, FileNotFoundError):
+        return None
+
+
+def _check_error_recurrence(error_text: str, state_dir: Path) -> dict | None:
+    """Trigger enriched search when error matches previous session patterns."""
+    if is_on_cooldown("error_recurrence", 60):
+        return None
+
+    project_id = _read_project_id(state_dir)
+    if project_id is None:
+        return None
+
+    try:
+        from local_store import _get_conn, get_error_history
+        from session_state import error_hash
+        ehash = error_hash(error_text)
+        conn = _get_conn()
+        history = get_error_history(conn, project_id, ehash)
+        conn.close()
+
+        if history:
+            set_cooldown("error_recurrence")
+            api_key = load_api_key()
+            if api_key:
+                context = _read_context_fingerprint(state_dir)
+                query = error_text.strip()[-200:]
+                results = search_commontrace(query, api_key, context)
+                if results:
+                    formatted = format_results(results)
+                    return {
+                        "hookSpecificOutput": {
+                            "hookEventName": "PostToolUse",
+                            "additionalContext": (
+                                f"This error has occurred in {len(history)} "
+                                f"previous session(s). CommonTrace found "
+                                f"relevant traces:\n\n{formatted}\n\n"
+                                f"Use get_trace with the ID to read "
+                                f"the full solution."
+                            ),
+                        }
+                    }
+    except Exception:
+        pass
+    return None
+
+
+def _check_domain_entry(file_path: str, state_dir: Path) -> dict | None:
+    """Trigger search when entering an unfamiliar language domain."""
+    if is_on_cooldown("domain_entry", 120):
+        return None
+
+    ext = Path(file_path).suffix.lower()
+    lang = EXTENSION_TO_LANGUAGE.get(ext)
+    if not lang:
+        return None
+
+    project_id = _read_project_id(state_dir)
+    if project_id is None:
+        return None
+
+    try:
+        from local_store import _get_conn, get_known_languages
+        conn = _get_conn()
+        known = get_known_languages(conn, project_id)
+        conn.close()
+
+        if lang not in known:
+            set_cooldown("domain_entry")
+            api_key = load_api_key()
+            if api_key:
+                query = f"{lang} common patterns and gotchas"
+                results = search_commontrace(query, api_key)
+                if results:
+                    formatted = format_results(results)
+                    return {
+                        "hookSpecificOutput": {
+                            "hookEventName": "PostToolUse",
+                            "additionalContext": (
+                                f"You're working in {lang} for the first "
+                                f"time in this project. CommonTrace found "
+                                f"relevant knowledge:\n\n{formatted}\n\n"
+                                f"Use get_trace with the ID to read "
+                                f"the full solution."
+                            ),
+                        }
+                    }
+    except Exception:
+        pass
+    return None
+
+
+def _check_pre_code(file_path: str, tool_name: str) -> dict | None:
+    """Trigger search before implementing a new file."""
+    if tool_name != "Write":
+        return None
+    if is_on_cooldown("pre_code", 180):
+        return None
+    if Path(file_path).exists():
+        return None
+
+    ext = Path(file_path).suffix.lower()
+    lang = EXTENSION_TO_LANGUAGE.get(ext)
+    if not lang:
+        return None
+
+    set_cooldown("pre_code")
+    api_key = load_api_key()
+    if api_key:
+        name = Path(file_path).stem.lower()
+        query = f"{lang} {name} implementation patterns"
+        results = search_commontrace(query, api_key)
+        if results:
+            formatted = format_results(results)
+            return {
+                "hookSpecificOutput": {
+                    "hookEventName": "PostToolUse",
+                    "additionalContext": (
+                        f"Before implementing {Path(file_path).name}, "
+                        f"CommonTrace found relevant patterns:\n\n"
+                        f"{formatted}\n\n"
+                        f"Use get_trace with the ID to read "
+                        f"the full solution."
+                    ),
+                }
+            }
+    return None
 
 
 def handle_contribution(data: dict, state_dir: Path) -> None:
@@ -293,7 +464,7 @@ def main() -> None:
         output = handle_bash(data, state_dir)
 
     elif tool_name in ("Write", "Edit", "NotebookEdit"):
-        handle_code_change(data, state_dir)
+        output = handle_code_change(data, state_dir)
 
     elif tool_name in ("WebSearch", "WebFetch"):
         handle_research(data, state_dir)
