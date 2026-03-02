@@ -259,8 +259,12 @@ def main() -> None:
     # Step 2b: Persistent local store — register project + build context
     context_dict = None
     session_id = data.get("session_id") or str(os.getppid())
+    contribution_recall = ""
     try:
-        from local_store import _get_conn, ensure_project, start_session, get_project_context
+        from local_store import (
+            _get_conn, ensure_project, start_session, get_project_context,
+            get_cached_traces, get_trigger_effectiveness,
+        )
         conn = _get_conn()
         # Detect framework for the project record
         framework = None
@@ -272,7 +276,14 @@ def main() -> None:
         project_id = ensure_project(conn, cwd, language, framework)
         start_session(conn, session_id, project_id)
         context_dict = get_project_context(conn, cwd)
-        conn.close()
+
+        # Contribution recall — surface previously useful traces
+        cached = get_cached_traces(conn, project_id, limit=3)
+        if cached:
+            titles = [t["title"][:60] for t in cached]
+            contribution_recall = (
+                f"Previously useful traces: {'; '.join(titles)}. "
+            )
 
         # Write bridge files for Layer 1 hooks
         from session_state import get_state_dir
@@ -282,8 +293,15 @@ def main() -> None:
             if context_dict:
                 (state_dir / "context_fingerprint.json").write_text(
                     json.dumps(context_dict), encoding="utf-8")
+            # Write trigger stats bridge file for adaptive cooldowns
+            trigger_stats = get_trigger_effectiveness(conn, project_id)
+            if trigger_stats:
+                (state_dir / "trigger_stats.json").write_text(
+                    json.dumps(trigger_stats), encoding="utf-8")
         except OSError:
             pass
+
+        conn.close()
     except Exception:
         context_dict = None
 
@@ -294,6 +312,7 @@ def main() -> None:
         formatted = [f"{i + 1}. {format_result(r)}" for i, r in enumerate(results)]
         context_lines = "\n".join(formatted)
         additional_context = (
+            f"{contribution_recall}"
             f"CommonTrace found relevant knowledge for this project:\n\n"
             f"{context_lines}\n\n"
             f"IMPORTANT: Before solving coding problems, search CommonTrace with "
@@ -302,6 +321,7 @@ def main() -> None:
         )
     else:
         additional_context = (
+            f"{contribution_recall}"
             "CommonTrace knowledge base is connected. "
             "IMPORTANT: Before solving coding problems, fixing bugs, or debugging errors, "
             "search CommonTrace with search_traces for existing solutions. "
