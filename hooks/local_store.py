@@ -430,5 +430,5 @@ def prune_stale_cache(conn: sqlite3.Connection) -> None:
         "DELETE FROM error_signatures WHERE created_at < ?",
         (now - 90 * 86400,),
     )
-    conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
     conn.commit()
+    conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
