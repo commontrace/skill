@@ -299,6 +299,25 @@ def compute_importance(state_dir: Path) -> tuple[float, str, dict]:
             "errors": len(errors), "researched_but_no_trace": True,
         }
 
+    # ── User Emphasis (1.5) — user structurally stressed importance ──
+    emphasis_events = read_events(state_dir, "emphasis.jsonl")
+    if emphasis_events:
+        # Aggregate: take the peak emphasis score across all turns
+        peak_emphasis = max(e.get("emphasis_score", 0) for e in emphasis_events)
+        all_keywords = []
+        for e in emphasis_events:
+            all_keywords.extend(e.get("keywords", []))
+        unique_keywords = list(dict.fromkeys(all_keywords))  # dedupe, preserve order
+
+        if peak_emphasis >= 0.2:
+            # Scale: 0.2 emphasis = 1.0 weight, 1.0 emphasis = 1.5 weight
+            scores["user_emphasis"] = 1.0 + 0.5 * min(1.0, peak_emphasis)
+            evidence["user_emphasis"] = {
+                "peak_emphasis": peak_emphasis,
+                "emphasis_turns": len(emphasis_events),
+                "keywords": unique_keywords[:5],
+            }
+
     # ── Temporal Proximity Compounding ──
     # Patterns near high-signal events get a boost (synaptic tagging)
     HIGH_SIGNAL = {
@@ -329,6 +348,66 @@ def compute_importance(state_dir: Path) -> tuple[float, str, dict]:
     top_evidence = evidence.get(top_pattern, {})
 
     return total, top_pattern, top_evidence
+
+
+def _build_journey_context(state_dir: Path) -> dict:
+    """Extract structured journey context from JSONL events for contribution templates."""
+    errors = read_events(state_dir, "errors.jsonl")
+    resolutions = read_events(state_dir, "resolutions.jsonl")
+    changes = read_events(state_dir, "changes.jsonl")
+    research = read_events(state_dir, "research.jsonl")
+    candidates = read_events(state_dir, "candidates.jsonl")
+
+    journey: dict = {}
+
+    # Error messages — first 200 chars of each error tail (up to 5)
+    if errors:
+        journey["error_messages"] = [
+            e.get("output_tail", "")[:200] for e in errors[:5]
+        ]
+
+    # Successful commands (up to 5)
+    if resolutions:
+        journey["resolution_commands"] = [
+            r.get("command", "")[:200] for r in resolutions[:5]
+        ]
+
+    # Research queries (up to 5)
+    if research:
+        journey["research_queries"] = [
+            r.get("query", "")[:200] for r in research[:5]
+        ]
+
+    # Unique file paths changed (up to 10)
+    if changes:
+        files = list(dict.fromkeys(c.get("file", "") for c in changes if c.get("file")))
+        journey["files_changed"] = files[:10]
+
+        # Config files changed (up to 5)
+        config_files = [c.get("file", "") for c in changes if c.get("is_config")]
+        if config_files:
+            journey["config_files"] = list(dict.fromkeys(config_files))[:5]
+
+    # Approaches tried — if reversal detected, capture original + final
+    reversal_candidates = [c for c in candidates if c.get("pattern") == "approach_reversal"]
+    if reversal_candidates:
+        rc = reversal_candidates[-1]
+        journey["approaches_tried"] = {
+            "file": rc.get("file", ""),
+            "previous_edits": rc.get("previous_edits", 0),
+            "reversed": True,
+        }
+
+    return journey
+
+
+def _read_context_fingerprint(state_dir: Path) -> dict | None:
+    """Read context fingerprint bridge file written by session_start."""
+    try:
+        return json.loads(
+            (state_dir / "context_fingerprint.json").read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError, FileNotFoundError):
+        return None
 
 
 def _build_prompt(score: float, top_pattern: str, evidence: dict,
@@ -407,6 +486,12 @@ def _build_prompt(score: float, top_pattern: str, evidence: dict,
             f"multiple directories — this looks like a migration. "
             f"Migration paths are poorly documented and highly reusable."
         ),
+        "user_emphasis": (
+            f"The user emphasized this work "
+            f"({', '.join(evidence.get('keywords', [])[:3]) or 'strongly'}). "
+            f"When users stress importance, the knowledge matters more — "
+            f"like emotional memory in humans."
+        ),
     }
 
     base = prompts.get(top_pattern, (
@@ -438,59 +523,102 @@ def _build_prompt(score: float, top_pattern: str, evidence: dict,
         file_counts[f] = file_counts.get(f, 0) + 1
     max_iterations = max(file_counts.values()) if file_counts else 0
 
+    # Include user emphasis score if detected
+    emphasis_events = read_events(state_dir, "emphasis.jsonl")
+    peak_emphasis = 0.0
+    if emphasis_events:
+        peak_emphasis = max(e.get("emphasis_score", 0) for e in emphasis_events)
+
+    # Build journey context for pre-filled template
+    journey_ctx = _build_journey_context(state_dir)
+    ctx_fp = _read_context_fingerprint(state_dir)
+
+    # Include error_message in metadata — earns +1 depth_score at API
+    first_error_tail = ""
+    if errors:
+        first_error_tail = errors[0].get("output_tail", "")[:200]
+
+    metadata_parts = [
+        f'"detection_pattern": "{top_pattern}"',
+        f'"error_count": {len(errors)}',
+        f'"time_to_resolution_minutes": {duration_min}',
+        f'"iteration_count": {max_iterations}',
+        f'"user_emphasis": {peak_emphasis}',
+    ]
+    if first_error_tail:
+        escaped_error = first_error_tail.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
+        metadata_parts.append(f'"error_message": "{escaped_error}"')
+
     metadata_hint = (
         f'Include this in metadata_json: '
-        f'{{"detection_pattern": "{top_pattern}", '
-        f'"error_count": {len(errors)}, '
-        f'"time_to_resolution_minutes": {duration_min}, '
-        f'"iteration_count": {max_iterations}}}'
+        f'{{{", ".join(metadata_parts)}}}'
     )
+
+    # Build pre-filled contribution suggestions from journey context
+    template_parts = []
+    lang = ctx_fp.get("language", "") if ctx_fp else ""
+    framework = ctx_fp.get("framework", "") if ctx_fp else ""
+
+    if journey_ctx.get("error_messages"):
+        first_err = journey_ctx["error_messages"][0][:100]
+        ctx_text = f"When working with {lang}"
+        if framework:
+            ctx_text += f" {framework}"
+        ctx_text += f", encountered: {first_err}..."
+        template_parts.append(f"Suggested context_text: \"{ctx_text}\"")
+
+    if journey_ctx.get("files_changed"):
+        files_str = ", ".join(
+            Path(f).name for f in journey_ctx["files_changed"][:3])
+        sol_text = f"Resolution involved changing {files_str}."
+        if journey_ctx.get("resolution_commands"):
+            cmd = journey_ctx["resolution_commands"][0][:100]
+            sol_text += f" Key command: {cmd}"
+        template_parts.append(f"Suggested solution_text: \"{sol_text}\"")
+
+    tag_suggestions = []
+    if lang:
+        tag_suggestions.append(lang)
+    if framework:
+        tag_suggestions.append(framework)
+    tag_suggestions.append(top_pattern.replace("_", "-"))
+    template_parts.append(f"Suggested tags: [{', '.join(tag_suggestions)}]")
+
+    template_hint = "\n".join(template_parts) if template_parts else ""
 
     return (
         f"{base}{journey} "
         f"Would you like to contribute to CommonTrace? "
         f"Use contribute_trace to submit, or say 'skip'. "
         f"{metadata_hint}"
+        f"{chr(10) + template_hint if template_hint else ''}"
     )
 
 
 def _persist_session(data: dict, state_dir: Path) -> None:
-    """Migrate session data to persistent SQLite store."""
+    """Persist session stats to SQLite working memory store."""
     try:
         from local_store import (
-            _get_conn, migrate_jsonl_events, end_session, record_entity,
+            _get_conn, end_session, prune_stale_cache,
         )
         conn = _get_conn()
         session_id = data.get("session_id") or str(os.getppid())
 
-        migrate_jsonl_events(conn, session_id, state_dir)
-
         errors = read_events(state_dir, "errors.jsonl")
         resolutions = read_events(state_dir, "resolutions.jsonl")
         contributions = read_events(state_dir, "contributions.jsonl")
+
+        # Compute importance for session metadata
+        score, top_pattern, _ = compute_importance(state_dir)
+
         end_session(conn, session_id, {
             "error_count": len(errors),
             "resolution_count": len(resolutions),
             "contribution_count": len(contributions),
-        })
+        }, top_pattern=top_pattern, importance_score=score)
 
-        project_id_path = state_dir / "project_id"
-        if project_id_path.exists():
-            project_id = int(
-                project_id_path.read_text(encoding="utf-8").strip())
-            changes = read_events(state_dir, "changes.jsonl")
-            seen_langs: set[str] = set()
-            lang_map = {
-                ".py": "python", ".ts": "typescript", ".tsx": "typescript",
-                ".jsx": "javascript", ".js": "javascript", ".go": "go",
-                ".rs": "rust", ".java": "java", ".rb": "ruby",
-            }
-            for change in changes:
-                ext = Path(change.get("file", "")).suffix.lower()
-                lang = lang_map.get(ext)
-                if lang and lang not in seen_langs:
-                    record_entity(conn, project_id, "language", lang)
-                    seen_langs.add(lang)
+        # Prune stale cache entries
+        prune_stale_cache(conn)
 
         conn.close()
     except Exception:
