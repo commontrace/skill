@@ -120,6 +120,33 @@ def set_cooldown(trigger_name: str) -> None:
         pass
 
 
+def _get_adaptive_cooldown(trigger_name: str, base_seconds: int,
+                           state_dir: Path) -> int:
+    """Scale cooldown by trigger conversion rate from trigger_feedback.
+
+    >= 40% rate → 0.5x cooldown (more aggressive — trigger is effective)
+    < 5% after 20+ firings → 3x cooldown (effectively suppress — not useful)
+    Default: no change
+    """
+    try:
+        stats_path = state_dir / "trigger_stats.json"
+        if not stats_path.exists():
+            return base_seconds
+        stats = json.loads(stats_path.read_text(encoding="utf-8"))
+        trigger_data = stats.get(trigger_name)
+        if not trigger_data:
+            return base_seconds
+        total = trigger_data.get("total", 0)
+        rate = trigger_data.get("rate", 0)
+        if total >= 20 and rate < 0.05:
+            return base_seconds * 3
+        if rate >= 0.4:
+            return max(base_seconds // 2, 5)
+    except (json.JSONDecodeError, OSError, TypeError):
+        pass
+    return base_seconds
+
+
 def search_commontrace(query: str, api_key: str,
                        context: dict | None = None) -> list[dict]:
     import urllib.error
@@ -238,7 +265,8 @@ def handle_bash(data: dict, state_dir: Path) -> dict | None:
 
         # Search CommonTrace with raw error output (let search engine
         # handle relevance — no keyword extraction needed)
-        if not is_on_cooldown("bash_error", 30):
+        if not is_on_cooldown("bash_error",
+                              _get_adaptive_cooldown("bash_error", 30, state_dir)):
             api_key = load_api_key()
             if api_key:
                 set_cooldown("bash_error")
@@ -302,11 +330,11 @@ def handle_code_change(data: dict, state_dir: Path) -> dict | None:
     return trigger_output
 
 
-def handle_research(data: dict, state_dir: Path) -> None:
-    """Handle WebSearch/WebFetch: record research activity."""
+def handle_research(data: dict, state_dir: Path) -> dict | None:
+    """Handle WebSearch/WebFetch: record research event."""
     tool_input = data.get("tool_input", {})
     if not isinstance(tool_input, dict):
-        return
+        return None
 
     tool_name = data.get("tool_name", "")
     query = tool_input.get("query", tool_input.get("url", ""))
@@ -315,6 +343,8 @@ def handle_research(data: dict, state_dir: Path) -> None:
         "tool": tool_name,
         "query": str(query)[:200],
     })
+
+    return None
 
 
 def _record_trigger_safe(state_dir: Path, trigger_name: str) -> None:
@@ -348,13 +378,9 @@ def _read_context_fingerprint(state_dir: Path) -> dict | None:
 
 
 def _check_error_recurrence(error_text: str, state_dir: Path) -> dict | None:
-    """Trigger enriched search when error matches previous session patterns.
-
-    Uses fuzzy signature matching (Jaccard similarity on normalized tokens)
-    instead of exact hash — catches the same exception at different line
-    numbers, different file paths, etc.
-    """
-    if is_on_cooldown("error_recurrence", 60):
+    """Record error signature for recurrence detection across sessions."""
+    if is_on_cooldown("error_recurrence",
+                      _get_adaptive_cooldown("error_recurrence", 60, state_dir)):
         return None
 
     project_id = _read_project_id(state_dir)
@@ -362,60 +388,21 @@ def _check_error_recurrence(error_text: str, state_dir: Path) -> dict | None:
         return None
 
     try:
-        from local_store import (
-            _get_conn, find_similar_errors, record_error_signature,
-            record_trigger,
-        )
+        from local_store import _get_conn, record_error_signature
         from session_state import error_signature
-
         sig = error_signature(error_text)
-        session_id = state_dir.name
         conn = _get_conn()
-
-        # Store this error's signature for future sessions
-        record_error_signature(conn, project_id, session_id, sig,
-                               error_text[-500:])
-
-        # Find similar errors from previous sessions
-        matches = find_similar_errors(conn, project_id, sig, session_id)
-
-        if matches:
-            set_cooldown("error_recurrence")
-            record_trigger(conn, session_id, "error_recurrence")
-            conn.close()
-
-            api_key = load_api_key()
-            if api_key:
-                context = _read_context_fingerprint(state_dir)
-                query = error_text.strip()[-200:]
-                results = search_commontrace(query, api_key, context)
-                if results:
-                    formatted = format_results(results)
-                    best_sim = max(m["similarity"] for m in matches)
-                    session_count = len(matches)
-                    return {
-                        "hookSpecificOutput": {
-                            "hookEventName": "PostToolUse",
-                            "additionalContext": (
-                                f"Similar error seen in {session_count} "
-                                f"previous session(s) ({best_sim:.0%} match). "
-                                f"CommonTrace found relevant traces:\n\n"
-                                f"{formatted}\n\n"
-                                f"Use get_trace with the ID to read "
-                                f"the full solution."
-                            ),
-                        }
-                    }
-        else:
-            conn.close()
+        record_error_signature(conn, project_id, sig)
+        conn.close()
     except Exception:
         pass
     return None
 
 
 def _check_domain_entry(file_path: str, state_dir: Path) -> dict | None:
-    """Trigger search when entering an unfamiliar language domain."""
-    if is_on_cooldown("domain_entry", 120):
+    """Trigger search when entering a language different from project primary language."""
+    if is_on_cooldown("domain_entry",
+                      _get_adaptive_cooldown("domain_entry", 120, state_dir)):
         return None
 
     ext = Path(file_path).suffix.lower()
@@ -428,12 +415,14 @@ def _check_domain_entry(file_path: str, state_dir: Path) -> dict | None:
         return None
 
     try:
-        from local_store import _get_conn, get_known_languages
+        from local_store import _get_conn, get_project_context
         conn = _get_conn()
-        known = get_known_languages(conn, project_id)
+        cwd = str(Path(file_path).parent)
+        ctx = get_project_context(conn, cwd)
         conn.close()
 
-        if lang not in known:
+        # Fire when editing in a language different from project's primary language
+        if ctx and ctx.get("language") != lang:
             set_cooldown("domain_entry")
             _record_trigger_safe(state_dir, "domain_entry")
             # Write bridge file for stop hook novelty scoring
@@ -452,9 +441,9 @@ def _check_domain_entry(file_path: str, state_dir: Path) -> dict | None:
                         "hookSpecificOutput": {
                             "hookEventName": "PostToolUse",
                             "additionalContext": (
-                                f"You're working in {lang} for the first "
-                                f"time in this project. CommonTrace found "
-                                f"relevant knowledge:\n\n{formatted}\n\n"
+                                f"You're working in {lang} "
+                                f"(project primary: {ctx.get('language', 'unknown')}). "
+                                f"CommonTrace found relevant knowledge:\n\n{formatted}\n\n"
                                 f"Use get_trace with the ID to read "
                                 f"the full solution."
                             ),
@@ -732,7 +721,8 @@ def _check_pre_code(file_path: str, tool_name: str,
     """Trigger search before implementing a new file."""
     if tool_name != "Write":
         return None
-    if is_on_cooldown("pre_code", 180):
+    cd = _get_adaptive_cooldown("pre_code", 180, state_dir) if state_dir else 180
+    if is_on_cooldown("pre_code", cd):
         return None
     if Path(file_path).exists():
         return None
@@ -767,8 +757,27 @@ def _check_pre_code(file_path: str, tool_name: str,
     return None
 
 
+def _parse_tool_response(data: dict) -> dict | None:
+    """Parse tool_response handling both dict and JSON string formats.
+
+    MCP tool responses may arrive as dicts or as JSON-serialized strings
+    depending on the Claude Code version and transport layer.
+    """
+    tool_response = data.get("tool_response")
+    if isinstance(tool_response, dict):
+        return tool_response
+    if isinstance(tool_response, str):
+        try:
+            parsed = json.loads(tool_response)
+            if isinstance(parsed, dict):
+                return parsed
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return None
+
+
 def handle_trace_consumption(data: dict, state_dir: Path) -> None:
-    """Handle get_trace: record that a trace was consumed (reinforcement)."""
+    """Handle get_trace: record consumption + cache trace pointer."""
     tool_input = data.get("tool_input", {})
     if not isinstance(tool_input, dict):
         return
@@ -778,17 +787,75 @@ def handle_trace_consumption(data: dict, state_dir: Path) -> None:
         return
 
     try:
-        from local_store import _get_conn, record_trace_consumed
+        from local_store import (
+            _get_conn, record_trace_consumed, mark_trace_used_v2,
+            cache_trace_pointer,
+        )
         session_id = state_dir.name
+        project_id = _read_project_id(state_dir)
         conn = _get_conn()
         record_trace_consumed(conn, session_id, trace_id)
+        mark_trace_used_v2(conn, trace_id, project_id)
+
+        # Cache trace pointer (title only — no content stored locally)
+        resp = _parse_tool_response(data)
+        if resp:
+            title = resp.get("title", "")
+            if title:
+                cache_trace_pointer(conn, trace_id, project_id, title,
+                                    source="search")
+        conn.close()
+    except Exception:
+        pass
+
+
+def handle_search_results(data: dict, state_dir: Path) -> None:
+    """Handle search_traces: cache search result pointers locally."""
+    resp = _parse_tool_response(data)
+    if not resp:
+        return
+
+    results = resp.get("results", [])
+    if not results:
+        return
+
+    try:
+        from local_store import _get_conn, cache_trace_pointer
+        project_id = _read_project_id(state_dir)
+        conn = _get_conn()
+        for r in results[:5]:
+            trace_id = r.get("id", "")
+            title = r.get("title", "")
+            if trace_id and title:
+                cache_trace_pointer(conn, trace_id, project_id, title,
+                                    source="search")
+        conn.close()
+    except Exception:
+        pass
+
+
+def handle_vote(data: dict, state_dir: Path) -> None:
+    """Handle vote_trace: record vote on cached trace pointer."""
+    tool_input = data.get("tool_input", {})
+    if not isinstance(tool_input, dict):
+        return
+
+    trace_id = tool_input.get("trace_id", "")
+    vote_type = tool_input.get("vote_type", "")
+    if not trace_id or vote_type not in ("up", "down"):
+        return
+
+    try:
+        from local_store import _get_conn, record_trace_vote_v2
+        conn = _get_conn()
+        record_trace_vote_v2(conn, trace_id, vote_type)
         conn.close()
     except Exception:
         pass
 
 
 def handle_contribution(data: dict, state_dir: Path) -> None:
-    """Handle MCP contribute_trace: record contribution."""
+    """Handle MCP contribute_trace: record contribution + store locally."""
     tool_response = data.get("tool_response", {})
     response_text = str(tool_response)
 
@@ -810,6 +877,42 @@ def handle_contribution(data: dict, state_dir: Path) -> None:
             str(count), encoding="utf-8")
     except (ValueError, OSError):
         pass
+
+    # Cache pointer to contributed trace (title only — API is source of truth)
+    # trace_id comes from the API contribution response, not from tool_input
+    tool_result = data.get("tool_response", {})
+    response_trace_id = trace_id  # already extracted from response text above
+    if response_trace_id:
+        try:
+            from local_store import _get_conn, cache_trace_pointer
+            tool_input = data.get("tool_input", {})
+            if isinstance(tool_input, dict):
+                title = tool_input.get("title", "")
+                if title:
+                    project_id = _read_project_id(state_dir)
+                    conn = _get_conn()
+                    cache_trace_pointer(conn, response_trace_id, project_id,
+                                        title, source="contributed")
+                    conn.close()
+        except Exception:
+            pass
+
+
+def handle_amendment(data: dict, state_dir: Path) -> None:
+    """Handle MCP amend_trace: no-op for local storage.
+
+    trace_cache stores only title (not solution content), so amendments
+    have no local storage effect. The API handles the amendment via MCP.
+    """
+    tool_input = data.get("tool_input", {})
+    if not isinstance(tool_input, dict):
+        return
+
+    trace_id = tool_input.get("trace_id", "")
+    improved_solution = tool_input.get("improved_solution", "")
+    if not trace_id or not improved_solution:
+        return
+    # No local storage update needed — trace_cache stores only title.
 
 
 # ── Main ─────────────────────────────────────────────────────────────────
@@ -838,13 +941,22 @@ def main() -> None:
         output = handle_code_change(data, state_dir)
 
     elif tool_name in ("WebSearch", "WebFetch"):
-        handle_research(data, state_dir)
+        output = handle_research(data, state_dir)
 
     elif "get_trace" in tool_name:
         handle_trace_consumption(data, state_dir)
 
     elif "contribute_trace" in tool_name:
         handle_contribution(data, state_dir)
+
+    elif "amend_trace" in tool_name:
+        handle_amendment(data, state_dir)
+
+    elif "search_traces" in tool_name:
+        handle_search_results(data, state_dir)
+
+    elif "vote_trace" in tool_name:
+        handle_vote(data, state_dir)
 
     if output:
         print(json.dumps(output))
