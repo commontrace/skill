@@ -44,7 +44,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from session_state import get_state_dir, read_events, read_counter
 
 
-RESOLUTION_DIR = Path("/tmp/commontrace-resolutions")
+RESOLUTION_DIR = Path.home() / ".commontrace" / "resolutions"
 IMPORTANCE_THRESHOLD = 4.0
 MIN_TURNS = 2
 

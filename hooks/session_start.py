@@ -42,8 +42,10 @@ def load_config() -> dict:
 
 def save_config(config: dict) -> None:
     """Persist config to ~/.commontrace/config.json."""
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
     CONFIG_FILE.write_text(json.dumps(config, indent=2), encoding="utf-8")
+    # H7: Restrict file permissions — owner read/write only
+    os.chmod(CONFIG_FILE, 0o600)
 
 
 def provision_api_key() -> str | None:
@@ -71,17 +73,23 @@ def provision_api_key() -> str | None:
 
 
 def configure_mcp(api_key: str) -> bool:
-    """Run `claude mcp add` to register the MCP server with the API key."""
+    """Run `claude mcp add` to register the MCP server with the API key.
+
+    H8: API key passed via environment variable, not CLI argument,
+    to avoid exposure in process listing (ps aux / /proc/pid/cmdline).
+    """
     try:
+        env = os.environ.copy()
+        env["COMMONTRACE_API_KEY"] = api_key
         result = subprocess.run(
             [
                 "claude", "mcp", "add", "commontrace",
                 "--transport", "http",
                 MCP_URL,
-                "-H", f"x-api-key: {api_key}",
+                "-H", "x-api-key: ${COMMONTRACE_API_KEY}",
                 "-s", "user",
             ],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, timeout=10, env=env,
         )
         return result.returncode == 0
     except (OSError, subprocess.TimeoutExpired):

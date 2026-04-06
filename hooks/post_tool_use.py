@@ -34,7 +34,7 @@ from session_state import (
 
 CONFIG_FILE = Path.home() / ".commontrace" / "config.json"
 API_BASE = "https://api.commontrace.org"
-COOLDOWN_DIR = Path("/tmp/commontrace-cooldowns")
+COOLDOWN_DIR = Path.home() / ".commontrace" / "cooldowns"
 
 EXTENSION_TO_LANGUAGE = {
     ".py": "python", ".ts": "typescript", ".tsx": "typescript",

@@ -19,11 +19,12 @@ Files:
 import hashlib
 import json
 import os
+import re
 import time
 from pathlib import Path
 
 
-STATE_ROOT = Path("/tmp/commontrace-sessions")
+STATE_ROOT = Path.home() / ".commontrace" / "sessions"
 
 # Config-like file patterns (for detecting configuration changes)
 CONFIG_EXTENSIONS = {
@@ -41,8 +42,19 @@ CONFIG_NAME_FRAGMENTS = {
 def get_state_dir(data: dict) -> Path:
     """Get or create session state directory."""
     session_id = data.get("session_id") or str(os.getppid())
+    # M18: Sanitize session_id — allow only alphanumeric, hyphens, underscores
+    session_id = re.sub(r'[^a-zA-Z0-9_-]', '', session_id)
+    if not session_id:
+        session_id = str(os.getppid())
     d = STATE_ROOT / session_id
-    d.mkdir(parents=True, exist_ok=True)
+    # H9: Create with restrictive permissions (owner-only)
+    d.mkdir(parents=True, exist_ok=True, mode=0o700)
+    # Ensure parent dir is also restrictive
+    if STATE_ROOT.exists():
+        try:
+            os.chmod(STATE_ROOT, 0o700)
+        except OSError:
+            pass
     return d
 
 
