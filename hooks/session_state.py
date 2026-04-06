@@ -109,7 +109,7 @@ def increment_counter(state_dir: Path, filename: str) -> int:
 
 def error_hash(text: str) -> str:
     """Short hash for deduplicating errors."""
-    return hashlib.md5(text[:300].encode()).hexdigest()[:10]
+    return hashlib.sha256(text[:300].encode()).hexdigest()[:10]
 
 
 def error_signature(text: str) -> str:

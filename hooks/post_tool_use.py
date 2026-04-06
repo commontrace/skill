@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from session_state import (
     get_state_dir, append_event, read_events, is_config_file,
 )
+from redact import redact_text, redact_command, is_sensitive_file
 
 
 CONFIG_FILE = Path.home() / ".commontrace" / "config.json"
@@ -250,11 +251,14 @@ def handle_bash(data: dict, state_dir: Path) -> dict | None:
         return None
 
     if is_error:
-        # ── Error: record to state + store signature ──
+        # M19/M20: Redact secrets before storing or sending
+        safe_command = redact_command(command[:200])
+        safe_error = redact_text(error_text[:500])
+
         append_event(state_dir, "errors.jsonl", {
             "source": "bash",
-            "command": command[:200],
-            "output_tail": error_text[:500],
+            "command": safe_command,
+            "output_tail": safe_error,
         })
 
         # Check for error recurrence in local store (takes priority)
@@ -271,8 +275,8 @@ def handle_bash(data: dict, state_dir: Path) -> dict | None:
             if api_key:
                 set_cooldown("bash_error")
                 _record_trigger_safe(state_dir, "bash_error")
-                # Use last 200 chars as search query
-                query = error_text.strip()[-200:]
+                # M19: Redact before sending error text as search query
+                query = redact_text(error_text.strip()[-200:])
                 if query:
                     results = search_commontrace(query, api_key)
                     if results:
@@ -294,8 +298,8 @@ def handle_bash(data: dict, state_dir: Path) -> dict | None:
         if previous_errors:
             append_event(state_dir, "resolutions.jsonl", {
                 "source": "bash",
-                "command": command[:200],
-                "output_preview": output[:200] if output else "",
+                "command": redact_command(command[:200]),
+                "output_preview": redact_text(output[:200]) if output else "",
                 "errors_before": len(previous_errors),
             })
 
@@ -310,6 +314,10 @@ def handle_code_change(data: dict, state_dir: Path) -> dict | None:
 
     file_path = tool_input.get("file_path", "")
     if not file_path:
+        return None
+
+    # M23: Skip recording changes to sensitive files entirely
+    if is_sensitive_file(file_path):
         return None
 
     tool_name = data.get("tool_name", "")

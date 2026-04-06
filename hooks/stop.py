@@ -626,8 +626,19 @@ def _persist_session(data: dict, state_dir: Path) -> None:
 
 
 def _report_trigger_stats(data: dict, state_dir: Path) -> None:
-    """Send anonymized trigger effectiveness stats to the API."""
+    """Send anonymized trigger effectiveness stats to the API.
+
+    M22: Only sends if user has opted in via telemetry=true in config.
+    """
     try:
+        # M22: Check telemetry consent before sending
+        config_file = Path.home() / ".commontrace" / "config.json"
+        if config_file.exists():
+            config = json.loads(config_file.read_text(encoding="utf-8"))
+            if not config.get("telemetry", False):
+                return
+        else:
+            return  # No config = no consent
         from local_store import _get_conn, get_trigger_effectiveness
         import urllib.request
 

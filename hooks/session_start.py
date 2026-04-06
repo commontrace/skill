@@ -113,13 +113,18 @@ def ensure_setup() -> str | None:
     if api_key:
         return api_key
 
-    # First run — auto-provision
+    # M21: Check if user has explicitly opted in before auto-provisioning
+    if not config.get("consent_given"):
+        # First run — don't auto-provision without consent.
+        # User must set COMMONTRACE_API_KEY env var or run setup manually.
+        return None
+
+    # Provision with consent
     api_key = provision_api_key()
     if not api_key:
         return None
 
     config["api_key"] = api_key
-    config["auto_provisioned"] = True
     save_config(config)
 
     # Configure MCP server for future sessions
