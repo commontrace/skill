@@ -31,7 +31,6 @@ Also handles: post-contribution refinement, session persistence,
 anonymized trigger stats reporting.
 """
 
-import hashlib
 import json
 import math
 import os
@@ -54,23 +53,23 @@ def get_session_key(data: dict) -> str:
     return str(session_id) if session_id else str(os.getppid())
 
 
-def score_dedup_key(score: float, top_pattern: str, evidence: dict) -> str:
-    """Stable hash based on score bucket + pattern + evidence."""
-    bucket = int(score)  # Dedup by integer bucket
-    key = f"{bucket}:{top_pattern}:" + json.dumps(
-        evidence, sort_keys=True, default=str)
-    return hashlib.md5(key.encode()).hexdigest()[:12]
+def _marker_path(session_key: str, kind: str, sub: str = "") -> Path:
+    name = f"prompted-{kind}-{session_key}"
+    if sub:
+        name += f"-{sub}"
+    return RESOLUTION_DIR / name
 
 
-def was_already_prompted(session_key: str, dedup_key: str) -> bool:
-    return (RESOLUTION_DIR / f"dedup-{session_key}-{dedup_key}").exists()
+def already_prompted(session_key: str, kind: str, sub: str = "") -> bool:
+    """One prompt per (session, kind, sub). Prevents re-nagging across turns
+    as score bumps or turns_since increment."""
+    return _marker_path(session_key, kind, sub).exists()
 
 
-def mark_prompted(session_key: str, dedup_key: str) -> None:
+def mark_prompted(session_key: str, kind: str, sub: str = "") -> None:
     RESOLUTION_DIR.mkdir(parents=True, exist_ok=True)
     try:
-        (RESOLUTION_DIR / f"dedup-{session_key}-{dedup_key}").write_text(
-            "1", encoding="utf-8")
+        _marker_path(session_key, kind, sub).write_text("1", encoding="utf-8")
     except OSError:
         pass
 
@@ -722,10 +721,8 @@ def main() -> None:
 
     if contributions and user_turns > turns_at_contribution:
         trace_id = contributions[-1].get("trace_id", "")
-        ev = {"trace_id": trace_id, "turns_since": user_turns - turns_at_contribution}
-        dedup_key = score_dedup_key(0, "post_contribution", ev)
-        if not was_already_prompted(session_key, dedup_key):
-            mark_prompted(session_key, dedup_key)
+        if not already_prompted(session_key, "amend", trace_id or "any"):
+            mark_prompted(session_key, "amend", trace_id or "any")
             print(json.dumps({
                 "decision": "block",
                 "reason": (
@@ -744,11 +741,10 @@ def main() -> None:
     if score < IMPORTANCE_THRESHOLD:
         return
 
-    dedup_key = score_dedup_key(score, top_pattern, top_evidence)
-    if was_already_prompted(session_key, dedup_key):
+    if already_prompted(session_key, "score"):
         return
 
-    mark_prompted(session_key, dedup_key)
+    mark_prompted(session_key, "score")
     prompt = _build_prompt(score, top_pattern, top_evidence, state_dir)
 
     print(json.dumps({
