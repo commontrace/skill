@@ -19,6 +19,7 @@ from pathlib import Path
 
 CONFIG_DIR = Path.home() / ".commontrace"
 CONFIG_FILE = CONFIG_DIR / "config.json"
+PENDING_DIR = CONFIG_DIR / "pending"
 API_BASE = "https://api.commontrace.org"
 MCP_URL = "https://mcp.commontrace.org/mcp"
 
@@ -215,6 +216,28 @@ def search_commontrace(query: str, language: str, api_key: str,
         return []
 
 
+def count_pending_traces() -> int:
+    """Count pending contribution candidates across all sessions.
+
+    Each line in ~/.commontrace/pending/*.jsonl is one candidate. Used in
+    manual mode to nudge the user about /trace contribute.
+    """
+    if not PENDING_DIR.exists():
+        return 0
+    total = 0
+    try:
+        for path in PENDING_DIR.glob("*.jsonl"):
+            try:
+                for line in path.read_text(encoding="utf-8").splitlines():
+                    if line.strip():
+                        total += 1
+            except OSError:
+                continue
+    except OSError:
+        return 0
+    return total
+
+
 def format_result(result: dict) -> str:
     title = result.get("title", "Untitled")
     context_text = result.get("context_text", "")[:100]
@@ -340,6 +363,18 @@ def main() -> None:
             "search CommonTrace with search_traces for existing solutions. "
             "After solving a non-trivial problem, contribute with contribute_trace."
         )
+
+    # Pending traces hint (manual mode only — auto mode submits live).
+    config = load_config()
+    if not config.get("auto_contribute", True):
+        pending_n = count_pending_traces()
+        if pending_n > 0:
+            additional_context += (
+                f"\n\n{pending_n} pending CommonTrace contribution(s) await user "
+                f"review. The user can run /trace contribute when they want to "
+                f"review them. Do not proactively prompt — only mention if the "
+                f"user asks about CommonTrace."
+            )
 
     output = {
         "hookSpecificOutput": {

@@ -128,12 +128,46 @@ You don't need to manage this — it's automatic:
 1. **Session start**: Detects project context (language, framework), searches CommonTrace
 2. **After every tool use**: Records structural signals (errors, changes, research),
    detects knowledge candidates in real-time, auto-searches on Bash errors
-3. **Session stop**: Scores accumulated knowledge importance, prompts you to contribute
-   if the score exceeds the threshold
+3. **Session stop**: Scores accumulated knowledge importance and either submits
+   automatically (auto mode, default) or queues for user review (manual mode)
 
 The hooks use **structural detection only** — exit codes, file paths, timestamps, tool
-sequences. They never read or interpret user messages or your responses. They detect
-WHEN to prompt; you decide IF and WHAT to contribute.
+sequences. They never read or interpret user messages or your responses.
+
+## Contribution Modes
+
+Contribution behavior is controlled by `~/.commontrace/config.json`:
+
+```json
+{ "auto_contribute": true }
+```
+
+### Auto mode (default — `auto_contribute: true`)
+
+When the Stop hook detects significant knowledge (score ≥ 4.0), it submits the trace
+to the API directly. No prompts, no agent involvement, no interruption to the user.
+
+Every auto-submission is logged to `~/.commontrace/auto-log.jsonl` with the trace ID,
+title, and detection score. The trace is flagged `auto_contributed: true` server-side
+so the user can review or bulk-delete from the web dashboard at any time.
+
+### Manual mode (`auto_contribute: false`)
+
+The Stop hook writes detected candidates silently to `~/.commontrace/pending/*.jsonl`.
+Nothing is submitted automatically.
+
+When the user wants to review, they run `/trace contribute`. The slash command:
+1. Lists pending candidates
+2. Asks Yes / No / Edit per candidate via `AskUserQuestion`
+3. Submits accepted candidates and deletes processed entries
+
+Session start surfaces a brief one-line hint when pending candidates exist, but never
+prompts proactively.
+
+### Switching modes
+
+Edit `~/.commontrace/config.json` and set `auto_contribute` to the desired value.
+Changes take effect on the next Stop hook invocation. No restart required.
 
 ## Guidelines
 

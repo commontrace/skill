@@ -44,8 +44,132 @@ from session_state import get_state_dir, read_events, read_counter
 
 
 RESOLUTION_DIR = Path.home() / ".commontrace" / "resolutions"
+PENDING_DIR = Path.home() / ".commontrace" / "pending"
+AUTO_LOG = Path.home() / ".commontrace" / "auto-log.jsonl"
+CONFIG_FILE = Path.home() / ".commontrace" / "config.json"
 IMPORTANCE_THRESHOLD = 4.0
 MIN_TURNS = 2
+
+
+def _read_config() -> dict:
+    """Read ~/.commontrace/config.json. Returns {} on any failure.
+
+    Recognized fields:
+      auto_contribute (bool, default True) — submit silently to API when true,
+                                              write pending file when false
+    """
+    try:
+        if CONFIG_FILE.exists():
+            return json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        pass
+    return {}
+
+
+def _write_pending(session_key: str, payload: dict) -> None:
+    """Append pending candidate for later user-driven review via /trace contribute.
+
+    Used in manual mode (auto_contribute=false). The slash command reads these
+    files and walks the user through approval via AskUserQuestion.
+    """
+    try:
+        PENDING_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+        path = PENDING_DIR / f"{session_key}.jsonl"
+        payload.setdefault("t", time.time())
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(payload) + "\n")
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
+    except OSError:
+        pass
+
+
+def _auto_submit(payload: dict) -> str | None:
+    """Submit candidate directly to API. Returns trace_id on success, else None.
+
+    Used in auto mode (auto_contribute=true). Best-effort — failures fall back
+    to writing a pending file so nothing is lost.
+    """
+    import urllib.request
+    import urllib.error
+    config = _read_config()
+    api_key = config.get("api_key") or os.environ.get("COMMONTRACE_API_KEY", "")
+    if not api_key:
+        return None
+    base_url = os.environ.get(
+        "COMMONTRACE_API_BASE_URL",
+        "https://api.commontrace.org").rstrip("/")
+
+    metadata = dict(payload.get("metadata_json") or {})
+    metadata["auto_contributed"] = True
+
+    body = {
+        "title": payload.get("title") or "auto-contributed trace",
+        "context_text": payload.get("suggested_context_text") or "(no context captured)",
+        "solution_text": payload.get("suggested_solution_text") or "(no solution captured)",
+        "tags": payload.get("suggested_tags") or [],
+        "metadata_json": metadata,
+    }
+
+    try:
+        data_bytes = json.dumps(body).encode("utf-8")
+        req = urllib.request.Request(
+            f"{base_url}/api/v1/traces",
+            data=data_bytes, method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "X-API-Key": api_key,
+            },
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            return data.get("id")
+    except (urllib.error.URLError, urllib.error.HTTPError, OSError, json.JSONDecodeError):
+        return None
+
+
+def _append_auto_log(entry: dict) -> None:
+    """Append a record of an auto-contributed trace for user audit."""
+    try:
+        AUTO_LOG.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        entry.setdefault("t", time.time())
+        with open(AUTO_LOG, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+        try:
+            os.chmod(AUTO_LOG, 0o600)
+        except OSError:
+            pass
+    except OSError:
+        pass
+
+
+def _build_title(top_pattern: str, evidence: dict, ctx_fp: dict | None) -> str:
+    """Generate a short trace title from structural signals — no LLM."""
+    lang = (ctx_fp or {}).get("language", "") if ctx_fp else ""
+    framework = (ctx_fp or {}).get("framework", "") if ctx_fp else ""
+
+    file_basename = ""
+    for key in ("file", "files", "fix_files", "config_files",
+                "security_files", "infra_files"):
+        val = evidence.get(key)
+        if isinstance(val, str) and val:
+            file_basename = Path(val).name
+            break
+        if isinstance(val, list) and val:
+            file_basename = Path(val[0]).name
+            break
+
+    pattern_label = top_pattern.replace("_", " ")
+    parts = [pattern_label]
+    if file_basename:
+        parts.append(f"in {file_basename}")
+    stack = "/".join(p for p in (lang, framework) if p)
+    if stack:
+        parts.append(f"({stack})")
+    title = " ".join(parts)[:200]
+    return title or "auto-contributed trace"
 
 
 def get_session_key(data: dict) -> str:
@@ -409,9 +533,14 @@ def _read_context_fingerprint(state_dir: Path) -> dict | None:
         return None
 
 
-def _build_prompt(score: float, top_pattern: str, evidence: dict,
-                  state_dir: Path) -> str:
-    """Build a context-rich contribution prompt based on detected knowledge."""
+def _build_candidate(score: float, top_pattern: str, evidence: dict,
+                     state_dir: Path) -> dict:
+    """Build a structured candidate payload + human prompt from detection state.
+
+    Returns dict with: score, top_pattern, evidence, metadata_json,
+    suggested_context_text, suggested_solution_text, suggested_tags,
+    title, human_prompt.
+    """
     candidates = read_events(state_dir, "candidates.jsonl")
 
     # Pattern-specific prompts
@@ -558,12 +687,16 @@ def _build_prompt(score: float, top_pattern: str, evidence: dict,
     lang = ctx_fp.get("language", "") if ctx_fp else ""
     framework = ctx_fp.get("framework", "") if ctx_fp else ""
 
+    suggested_context_text = ""
+    suggested_solution_text = ""
+
     if journey_ctx.get("error_messages"):
         first_err = journey_ctx["error_messages"][0][:100]
         ctx_text = f"When working with {lang}"
         if framework:
             ctx_text += f" {framework}"
         ctx_text += f", encountered: {first_err}..."
+        suggested_context_text = ctx_text
         template_parts.append(f"Suggested context_text: \"{ctx_text}\"")
 
     if journey_ctx.get("files_changed"):
@@ -573,6 +706,7 @@ def _build_prompt(score: float, top_pattern: str, evidence: dict,
         if journey_ctx.get("resolution_commands"):
             cmd = journey_ctx["resolution_commands"][0][:100]
             sol_text += f" Key command: {cmd}"
+        suggested_solution_text = sol_text
         template_parts.append(f"Suggested solution_text: \"{sol_text}\"")
 
     tag_suggestions = []
@@ -585,13 +719,35 @@ def _build_prompt(score: float, top_pattern: str, evidence: dict,
 
     template_hint = "\n".join(template_parts) if template_parts else ""
 
-    return (
+    human_prompt = (
         f"{base}{journey} "
         f"Would you like to contribute to CommonTrace? "
         f"Use contribute_trace to submit, or say 'skip'. "
         f"{metadata_hint}"
         f"{chr(10) + template_hint if template_hint else ''}"
     )
+
+    metadata_json: dict = {
+        "detection_pattern": top_pattern,
+        "error_count": len(errors),
+        "time_to_resolution_minutes": duration_min,
+        "iteration_count": max_iterations,
+        "user_emphasis": peak_emphasis,
+    }
+    if first_error_tail:
+        metadata_json["error_message"] = first_error_tail
+
+    return {
+        "score": score,
+        "top_pattern": top_pattern,
+        "evidence": evidence,
+        "metadata_json": metadata_json,
+        "suggested_context_text": suggested_context_text,
+        "suggested_solution_text": suggested_solution_text,
+        "suggested_tags": tag_suggestions,
+        "title": _build_title(top_pattern, evidence, ctx_fp),
+        "human_prompt": human_prompt,
+    }
 
 
 def _persist_session(data: dict, state_dir: Path) -> None:
@@ -719,20 +875,28 @@ def main() -> None:
     except (ValueError, OSError):
         pass
 
+    config = _read_config()
+    auto_mode = config.get("auto_contribute", True)
+
     if contributions and user_turns > turns_at_contribution:
         trace_id = contributions[-1].get("trace_id", "")
         if not already_prompted(session_key, "amend", trace_id or "any"):
             mark_prompted(session_key, "amend", trace_id or "any")
-            print(json.dumps({
-                "decision": "block",
-                "reason": (
+            # Amend suggestions never auto-submit — they always need human
+            # judgment about what to add. Write to pending regardless of mode.
+            _write_pending(session_key, {
+                "kind": "amend",
+                "session_id": data.get("session_id", ""),
+                "cwd": data.get("cwd", ""),
+                "trace_id": trace_id,
+                "title": f"Amend trace {trace_id[:8]}" if trace_id else "Amend last trace",
+                "human_prompt": (
                     "You contributed a trace earlier and the conversation "
                     "continued. The trace may benefit from additional context. "
                     f"Use amend_trace to update it"
-                    f"{f' (ID: {trace_id})' if trace_id else ''}, "
-                    "or say 'skip'."
+                    f"{f' (ID: {trace_id})' if trace_id else ''}."
                 ),
-            }))
+            })
             return
 
     # Compute importance score
@@ -745,12 +909,29 @@ def main() -> None:
         return
 
     mark_prompted(session_key, "score")
-    prompt = _build_prompt(score, top_pattern, top_evidence, state_dir)
+    candidate = _build_candidate(score, top_pattern, top_evidence, state_dir)
 
-    print(json.dumps({
-        "decision": "block",
-        "reason": prompt,
-    }))
+    if auto_mode:
+        trace_id = _auto_submit(candidate)
+        if trace_id:
+            _append_auto_log({
+                "trace_id": trace_id,
+                "session_id": data.get("session_id", ""),
+                "cwd": data.get("cwd", ""),
+                "title": candidate.get("title", ""),
+                "score": candidate.get("score", 0),
+                "top_pattern": candidate.get("top_pattern", ""),
+                "tags": candidate.get("suggested_tags", []),
+            })
+            return
+        # API failure: fall through to pending so nothing is lost
+
+    _write_pending(session_key, {
+        "kind": "score",
+        "session_id": data.get("session_id", ""),
+        "cwd": data.get("cwd", ""),
+        **candidate,
+    })
 
 
 if __name__ == "__main__":
