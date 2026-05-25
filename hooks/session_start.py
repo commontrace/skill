@@ -20,8 +20,10 @@ from pathlib import Path
 CONFIG_DIR = Path.home() / ".commontrace"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 PENDING_DIR = CONFIG_DIR / "pending"
+PING_MARKER = CONFIG_DIR / "last_ping_date"
 API_BASE = "https://api.commontrace.org"
 MCP_URL = "https://mcp.commontrace.org/mcp"
+SKILL_VERSION = "0.2.0"
 
 SOURCE_EXTENSIONS = {".py", ".ts", ".js", ".tsx", ".jsx", ".go", ".rs", ".java", ".rb"}
 EXTENSION_TO_LANGUAGE = {
@@ -71,6 +73,55 @@ def provision_api_key() -> str | None:
             return data.get("api_key")
     except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, OSError):
         return None
+
+
+def _post_json(path: str, payload: dict, api_key: str, timeout: float = 3.0) -> bool:
+    """POST JSON to API with X-API-Key. Returns True on 2xx, False otherwise.
+    Always silent — telemetry must never affect the user-facing session."""
+    base_url = os.environ.get("COMMONTRACE_API_BASE_URL", API_BASE).rstrip("/")
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        f"{base_url}{path}",
+        data=data,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "X-API-Key": api_key,
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return 200 <= resp.status < 300
+    except Exception:
+        return False
+
+
+def report_install(api_key: str) -> None:
+    """One-shot install beacon — fires once per install after key provisioning."""
+    payload = {
+        "platform": "Claude Code",
+        "skill_version": SKILL_VERSION,
+        "install_source": "plugin",
+    }
+    _post_json("/api/v1/telemetry/install", payload, api_key)
+
+
+def maybe_ping(api_key: str) -> None:
+    """Daily heartbeat — fires once per UTC day per install (local rate-limit)."""
+    import datetime as _dt
+    today = _dt.datetime.utcnow().date().isoformat()
+    try:
+        if PING_MARKER.exists():
+            last = PING_MARKER.read_text(encoding="utf-8").strip()
+            if last == today:
+                return
+    except OSError:
+        pass
+    if _post_json("/api/v1/telemetry/ping", {}, api_key, timeout=2.0):
+        try:
+            PING_MARKER.write_text(today, encoding="utf-8")
+        except OSError:
+            pass
 
 
 def configure_mcp(api_key: str) -> bool:
@@ -130,6 +181,12 @@ def ensure_setup() -> str | None:
 
     # Configure MCP server for future sessions
     configure_mcp(api_key)
+
+    # Fire-and-forget install beacon (silent on failure)
+    try:
+        report_install(api_key)
+    except Exception:
+        pass
 
     return api_key
 
@@ -265,6 +322,12 @@ def main() -> None:
     api_key = ensure_setup()
     if not api_key:
         return
+
+    # Step 1b: Daily DAU heartbeat (silent, rate-limited to 1/day locally)
+    try:
+        maybe_ping(api_key)
+    except Exception:
+        pass
 
     # Step 2: Detect coding context
     cwd = data.get("cwd", os.getcwd())
