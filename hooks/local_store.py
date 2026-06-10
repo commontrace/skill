@@ -6,7 +6,7 @@ The remote PostgreSQL API is the source of truth. This store tracks only:
   - sessions: per-session stats and top pattern
   - trace_cache: pointers (id + title) for recently seen traces
   - trigger_feedback: which triggers led to trace consumption
-  - error_signatures: error fingerprints for recurrence detection
+  - error_signatures: error fingerprints + the fix that resolved them (recurrence detection and error-time injection)
 
 All functions accept an open connection (callers call _get_conn()).
 All write operations call conn.commit() immediately.
@@ -20,7 +20,7 @@ from pathlib import Path
 
 DB_PATH = Path.home() / ".commontrace" / "local.db"
 
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -74,7 +74,14 @@ CREATE TABLE IF NOT EXISTS error_signatures (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
     signature TEXT NOT NULL,
-    created_at REAL NOT NULL
+    created_at REAL NOT NULL,
+    last_seen_at REAL NOT NULL,
+    seen_count INTEGER DEFAULT 1,
+    resolved_at REAL,
+    fix_command TEXT,
+    fix_files TEXT,
+    trace_id TEXT,
+    UNIQUE(project_id, signature)
 );
 CREATE INDEX IF NOT EXISTS idx_error_sig_project ON error_signatures(project_id, created_at DESC);
 """
@@ -87,8 +94,10 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
         return
     if version < 2:
         _migrate_to_v2(conn)
-        conn.execute(f"PRAGMA user_version = {CURRENT_SCHEMA_VERSION}")
-        conn.commit()
+    if version < 3:
+        _migrate_to_v3(conn)
+    conn.execute(f"PRAGMA user_version = {CURRENT_SCHEMA_VERSION}")
+    conn.commit()
 
 
 def _migrate_to_v2(conn: sqlite3.Connection) -> None:
@@ -159,6 +168,49 @@ def _migrate_to_v2(conn: sqlite3.Connection) -> None:
     ]:
         conn.execute(f"DROP TABLE IF EXISTS {table}")
     conn.commit()
+
+
+def _migrate_to_v3(conn: sqlite3.Connection) -> None:
+    """Migrate from v2 to v3: deduplicate error_signatures and add resolution payload.
+
+    Aggregates duplicate (project_id, signature) rows into a single row with:
+      - created_at = earliest occurrence
+      - last_seen_at = most recent occurrence
+      - seen_count = number of occurrences
+      - resolved_at, fix_command, fix_files, trace_id = NULL (populated later)
+    Adds UNIQUE(project_id, signature) constraint via table rebuild.
+    """
+    tables = {row[0] for row in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    if "error_signatures" not in tables:
+        return
+    sig_cols = {row[1] for row in conn.execute("PRAGMA table_info(error_signatures)")}
+    if "seen_count" not in sig_cols:
+        conn.executescript("""
+            BEGIN EXCLUSIVE;
+            CREATE TABLE IF NOT EXISTS error_signatures_v3 (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+                signature TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                last_seen_at REAL NOT NULL,
+                seen_count INTEGER DEFAULT 1,
+                resolved_at REAL,
+                fix_command TEXT,
+                fix_files TEXT,
+                trace_id TEXT,
+                UNIQUE(project_id, signature)
+            );
+            INSERT INTO error_signatures_v3
+                (project_id, signature, created_at, last_seen_at, seen_count)
+                SELECT project_id, signature,
+                       MIN(created_at), MAX(created_at), COUNT(*)
+                FROM error_signatures
+                GROUP BY project_id, signature;
+            DROP TABLE error_signatures;
+            ALTER TABLE error_signatures_v3 RENAME TO error_signatures;
+            COMMIT;
+        """)
 
 
 def _get_conn() -> sqlite3.Connection:
