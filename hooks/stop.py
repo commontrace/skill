@@ -145,6 +145,28 @@ def _append_auto_log(entry: dict) -> None:
         pass
 
 
+def _struggle_artifact(candidate, state_dir, trace_id=""):
+    """Write the Wordle-style struggle line for this session's knowledge.
+
+    Aggregate shape only — built from event timestamps and counts, never
+    from error text or file names. Never raises (artifacts must not be
+    able to break the Stop hook).
+    """
+    try:
+        from artifacts import struggle_grid, struggle_line, write_artifact
+        errors = read_events(state_dir, "errors.jsonl")
+        changes = read_events(state_dir, "changes.jsonl")
+        meta = candidate.get("metadata_json") or {}
+        grid = struggle_grid([e.get("t", 0) for e in errors],
+                             [c.get("t", 0) for c in changes], resolved=True)
+        line = struggle_line(grid, meta.get("time_to_resolution_minutes", 0),
+                             meta.get("error_count", 0), trace_id=trace_id)
+        write_artifact("last-struggle.txt", line + "\n")
+        return line
+    except Exception:
+        return None
+
+
 def _build_title(top_pattern: str, evidence: dict, ctx_fp: dict | None) -> str:
     """Generate a short trace title from structural signals — no LLM."""
     lang = (ctx_fp or {}).get("language", "") if ctx_fp else ""
@@ -923,13 +945,21 @@ def main() -> None:
                 "top_pattern": candidate.get("top_pattern", ""),
                 "tags": candidate.get("suggested_tags", []),
             })
+            line = _struggle_artifact(candidate, state_dir, trace_id)
+            if line:
+                print(json.dumps({"systemMessage": (
+                    "CommonTrace captured this fight:\n" + line +
+                    "\n(saved to ~/.commontrace/artifacts/"
+                    "last-struggle.txt — paste it anywhere)")}))
             return
         # API failure: fall through to pending so nothing is lost
 
+    line = _struggle_artifact(candidate, state_dir)
     _write_pending(session_key, {
         "kind": "score",
         "session_id": data.get("session_id", ""),
         "cwd": data.get("cwd", ""),
+        **({"struggle_grid": line} if line else {}),
         **candidate,
     })
 
