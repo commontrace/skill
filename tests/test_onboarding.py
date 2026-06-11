@@ -125,3 +125,51 @@ class TestSetupFailedNotice(OnboardingTestCase):
 
         second = self._run_main()
         self.assertEqual(second, "")
+
+
+class TestFirstRunNotice(OnboardingTestCase):
+    def _project_dir(self):
+        proj = self.tmp_path / "proj"
+        (proj / ".git").mkdir(parents=True, exist_ok=True)
+        (proj / "app.py").write_text("x = 1\n", encoding="utf-8")
+        return proj
+
+    def _run_main(self, cwd):
+        stdin_data = json.dumps(
+            {"cwd": str(cwd), "session_id": "s-onboard"})
+        out = io.StringIO()
+        with mock.patch.object(session_start, "maybe_ping"), \
+             mock.patch.object(session_start, "search_commontrace",
+                               return_value=[]), \
+             mock.patch.object(sys, "stdin", io.StringIO(stdin_data)), \
+             redirect_stdout(out):
+            session_start.main()
+        return out.getvalue()
+
+    def test_notice_prepended_once_then_cleared(self):
+        session_start.save_config(
+            {"api_key": "k", "pending_first_run_notice": True})
+        output = self._run_main(self._project_dir())
+        payload = json.loads(output)
+        ctx = payload["hookSpecificOutput"]["additionalContext"]
+        self.assertTrue(ctx.startswith("CommonTrace first-run notice"))
+        saved = json.loads(
+            session_start.CONFIG_FILE.read_text(encoding="utf-8"))
+        self.assertNotIn("pending_first_run_notice", saved)
+
+        # Second session: notice must not repeat
+        output2 = self._run_main(self._project_dir())
+        ctx2 = json.loads(output2)["hookSpecificOutput"]["additionalContext"]
+        self.assertFalse(ctx2.startswith("CommonTrace first-run notice"))
+
+    def test_notice_deferred_until_a_session_emits_context(self):
+        session_start.save_config(
+            {"api_key": "k", "pending_first_run_notice": True})
+        bare = self.tmp_path / "bare"
+        bare.mkdir()
+        # no .git → main returns before emitting anything
+        output = self._run_main(bare)
+        self.assertEqual(output, "")
+        saved = json.loads(
+            session_start.CONFIG_FILE.read_text(encoding="utf-8"))
+        self.assertTrue(saved["pending_first_run_notice"])

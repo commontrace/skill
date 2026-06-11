@@ -36,6 +36,21 @@ SETUP_FAILED_NOTICE = (
     "this to the user only if they ask about CommonTrace."
 )
 
+FIRST_RUN_NOTICE = (
+    "CommonTrace first-run notice — relay this to the user in one short "
+    "paragraph at the start of your reply: CommonTrace is now connected. An "
+    "anonymous account was created automatically (random ID, no personal "
+    "data) and the API key is stored at ~/.commontrace/config.json. Sessions "
+    "now search a shared knowledge base of coding fixes, and solved problems "
+    "are auto-contributed back in anonymized, secret-redacted form (set "
+    "auto_contribute to false in ~/.commontrace/config.json to review before "
+    "anything is shared). To use a personal account: set the "
+    "COMMONTRACE_API_KEY environment variable. To disconnect entirely: "
+    "delete ~/.commontrace and run 'claude mcp remove commontrace'. MCP "
+    "tools (search_traces, contribute_trace) load from the next session "
+    "onward."
+)
+
 SOURCE_EXTENSIONS = {".py", ".ts", ".js", ".tsx", ".jsx", ".go", ".rs", ".java", ".rb"}
 EXTENSION_TO_LANGUAGE = {
     ".py": "python", ".ts": "typescript", ".tsx": "typescript",
@@ -523,6 +538,17 @@ def main() -> None:
                 f"review them. Do not proactively prompt — only mention if the "
                 f"user asks about CommonTrace."
             )
+
+    # First-run disclosure (M21 zero-decision transparency) — queued by
+    # ensure_setup at provisioning time, delivered once in the first
+    # session that actually emits context, then cleared.
+    if config.get("pending_first_run_notice"):
+        additional_context = f"{FIRST_RUN_NOTICE}\n\n{additional_context}"
+        config.pop("pending_first_run_notice", None)
+        try:
+            save_config(config)
+        except OSError:
+            pass
 
     # Monthly Compiled drop (first session of a new month → previous
     # month's numbers). Local-only; must never block session start.
