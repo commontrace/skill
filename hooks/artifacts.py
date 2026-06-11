@@ -355,3 +355,55 @@ def compiled_recap(conn, year, month):
     lines.append("  Your agent's own numbers, from your machine. "
                  "— commontrace.org")
     return "\n".join(lines)
+
+
+def write_artifact(name, content):
+    """Write an artifact under ARTIFACTS_DIR with H9 perms (0700/0600)."""
+    ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path = ARTIFACTS_DIR / name
+    path.write_text(content, encoding="utf-8")
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+    return path
+
+
+def main(argv):
+    cmd = argv[1] if len(argv) > 1 else "brain"
+    from local_store import _get_conn
+    conn = _get_conn()
+    try:
+        if cmd == "brain":
+            data = load_brain_data(conn)
+            html = write_artifact("brain.html", render_brain_html(data))
+            svg = write_artifact("brain.svg", render_brain_svg(data))
+            badge = write_artifact("badge.svg", render_badge_svg(data))
+            print(f"brain page  : {html}")
+            print(f"brain svg   : {svg}")
+            print(f"readme badge: {badge}")
+            print(f"{data['solved']} solved · {data['open']} open · "
+                  f"{len(data['projects'])} projects")
+            return 0
+        if cmd == "recap":
+            if len(argv) > 2:
+                year, month = (int(x) for x in argv[2].split("-"))
+            else:
+                t = time.localtime()
+                year, month = ((t.tm_year, t.tm_mon - 1) if t.tm_mon > 1
+                               else (t.tm_year - 1, 12))
+            text = compiled_recap(conn, year, month)
+            if text:
+                print(text)
+                return 0
+            print(f"No activity recorded for {year}-{month:02d}.")
+            return 0
+        print(f"Unknown command: {cmd}. "
+              f"Usage: artifacts.py [brain|recap [YYYY-MM]]")
+        return 1
+    finally:
+        conn.close()
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

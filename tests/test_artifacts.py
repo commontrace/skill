@@ -242,3 +242,36 @@ class TestCompiledRecap(HookTestCase):
         text = artifacts.compiled_recap(conn, 2026, 5)
         self.assertNotIn("sig-a", text)
         self.assertNotIn("/test-project", text)
+
+
+class TestWriteArtifactAndCLI(HookTestCase):
+    def test_write_artifact_perms(self):
+        path = artifacts.write_artifact("probe.txt", "hello\n")
+        self.assertEqual(path.read_text(encoding="utf-8"), "hello\n")
+        self.assertEqual(path.parent, artifacts.ARTIFACTS_DIR)
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(path.parent.stat().st_mode & 0o777, 0o700)
+
+    def test_cli_brain_writes_three_files(self):
+        conn = self.get_conn()
+        seed_sensitive_project(conn)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = artifacts.main(["artifacts.py", "brain"])
+        self.assertEqual(rc, 0)
+        for name in ("brain.html", "brain.svg", "badge.svg"):
+            self.assertTrue((artifacts.ARTIFACTS_DIR / name).exists())
+        self.assertIn("1 solved", buf.getvalue())
+
+    def test_cli_recap_empty_month(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = artifacts.main(["artifacts.py", "recap", "2026-04"])
+        self.assertEqual(rc, 0)
+        self.assertIn("No activity recorded for 2026-04", buf.getvalue())
+
+    def test_cli_unknown_command(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = artifacts.main(["artifacts.py", "bogus"])
+        self.assertEqual(rc, 1)
