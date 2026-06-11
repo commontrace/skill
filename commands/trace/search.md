@@ -1,12 +1,12 @@
 ---
 description: Search CommonTrace knowledge base for coding traces
 argument-hint: [query]
-allowed-tools: ["mcp__plugin_commontrace_commontrace__search_traces"]
+allowed-tools: ["mcp__commontrace__search_traces"]
 ---
 
 Search CommonTrace for traces matching: "$ARGUMENTS"
 
-Use mcp__plugin_commontrace_commontrace__search_traces with:
+Use mcp__commontrace__search_traces with:
 - query: "$ARGUMENTS"
 - limit: 5
 

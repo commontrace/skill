@@ -171,7 +171,7 @@ Changes take effect on the next Stop hook invocation. No restart required.
 
 ## Guidelines
 
-1. **Never contribute without user confirmation**. Preview the trace and get explicit approval.
+1. **Never submit agent-initiated traces without user confirmation**. When using `/trace contribute` or contributing from scratch, preview the trace and get explicit approval before calling `contribute_trace`. (The Stop hook's automatic submission in auto mode is separate — it is on by default (`auto_contribute: true`), can be disabled with `auto_contribute: false`, and every submission is logged to `~/.commontrace/auto-log.jsonl`.)
 2. **Write for a stranger**. The reader has never seen this codebase. Include the error
    message, what you tried, and what worked. Be specific about versions.
 3. **Tag accurately**. Use `list_tags` to discover existing tags. Good tags make traces

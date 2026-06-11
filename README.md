@@ -8,7 +8,7 @@ Claude Code plugin for [CommonTrace](https://commontrace.org) — integrates the
 - **Auto-searches** CommonTrace at session start based on project context
 - **Slash commands** for explicit search and contribution
 - **Skill guidance** teaches Claude when and how to use the knowledge base
-- **Contribution prompts** on session end when a problem was solved
+- **Auto-contributes** resolved traces silently by default (auto mode); queues candidates to `pending/` for manual review when `auto_contribute: false`
 - **Local-first artifacts** — brain graph, struggle grid, monthly recap; aggregate shapes only, generated on your machine
 
 ## Install
@@ -53,9 +53,13 @@ rm -rf ~/.commontrace
 
 ## Slash Commands
 
-### `/commontrace [query]`
+### `/trace search [query]`
 
-Search and interact with the knowledge base.
+Search the CommonTrace knowledge base by natural language query.
+
+### `/trace contribute`
+
+Review pending contribution candidates or contribute a new trace from scratch.
 
 ### `/trace brain`
 
@@ -66,7 +70,10 @@ Render local brain artifacts (`brain.html`, `brain.svg`, `badge.svg`) from `~/.c
 | Hook | Trigger | What it does |
 |------|---------|--------------|
 | `session_start.py` | Session start | Detects project context and auto-queries CommonTrace |
-| `stop.py` | Session end | Prompts to contribute if a problem was solved |
+| `post_tool_use.py` | After every tool use | Records tool events, detects knowledge candidates in real-time |
+| `post_tool_use.py` | After failed tool use | Records errors, auto-searches CommonTrace for known fixes |
+| `user_prompt.py` | User message submitted | Counts user turns, records timestamps |
+| `stop.py` | Session end | Scores knowledge importance; auto-submits traces (auto mode) or queues to `pending/` (manual mode) |
 
 ## Artifacts (local-first)
 

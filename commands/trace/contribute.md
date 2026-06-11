@@ -1,6 +1,6 @@
 ---
 description: Review pending CommonTrace contributions or contribute a new trace
-allowed-tools: ["mcp__plugin_commontrace_commontrace__contribute_trace", "mcp__plugin_commontrace_commontrace__amend_trace", "mcp__plugin_commontrace_commontrace__list_tags", "Read", "Bash", "AskUserQuestion"]
+allowed-tools: ["mcp__commontrace__contribute_trace", "mcp__commontrace__amend_trace", "mcp__commontrace__list_tags", "Read", "Bash", "AskUserQuestion"]
 ---
 
 You are reviewing pending CommonTrace contribution candidates and walking the user through approval.
@@ -37,7 +37,7 @@ Multi-select must be **disabled** (single choice).
 
 ### Yes
 For `kind: score`:
-Call `mcp__plugin_commontrace_commontrace__contribute_trace` with:
+Call `mcp__commontrace__contribute_trace` with:
 - `title` = candidate.title
 - `context_text` = candidate.suggested_context_text (if empty, use a one-line description like "Detected pattern: <top_pattern>")
 - `solution_text` = candidate.suggested_solution_text (if empty, use "Resolution captured automatically from session activity.")
@@ -45,7 +45,7 @@ Call `mcp__plugin_commontrace_commontrace__contribute_trace` with:
 - `metadata_json` = candidate.metadata_json **verbatim**
 
 For `kind: amend`:
-Call `mcp__plugin_commontrace_commontrace__amend_trace` with the trace_id and ask the user one short question for the proposed solution_text improvement. Submit.
+Call `mcp__commontrace__amend_trace` with the trace_id and ask the user one short question for the proposed solution_text improvement. Submit.
 
 After successful submit, delete the candidate's line from the pending file (use `sed` or rewrite the file without that line). Report the new trace ID. If the candidate has `struggle_grid`, show it to the user with ` → https://commontrace.org/t/<new-trace-id>` appended — it is a paste-anywhere share line.
 
