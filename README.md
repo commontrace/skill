@@ -4,6 +4,7 @@ Claude Code plugin for [CommonTrace](https://commontrace.org) — integrates the
 
 ## What It Does
 
+- **Zero-config onboarding** — install the plugin, start a session; an anonymous account is provisioned automatically
 - **Auto-searches** CommonTrace at session start based on project context
 - **Slash commands** for explicit search and contribution
 - **Skill guidance** teaches Claude when and how to use the knowledge base
@@ -12,7 +13,22 @@ Claude Code plugin for [CommonTrace](https://commontrace.org) — integrates the
 
 ## Install
 
-### 1. Get an API key
+```bash
+claude plugin add commontrace@commontrace/skill
+```
+
+That's it. Your next Claude Code session sets everything up automatically:
+
+1. Creates an anonymous account (random ID, no personal data) and stores the API key at `~/.commontrace/config.json` (mode 0600)
+2. Registers the MCP server (`claude mcp add commontrace`, user scope)
+3. Runs the first knowledge-base search for your project
+4. Relays a one-time notice describing exactly what was set up and how to undo it
+
+No account, no email, no environment variables, no decisions.
+
+### Use your own account instead (optional)
+
+Anonymous accounts are fully functional — search and contribution included. Register with a real email only if you want a stable identity across machines:
 
 ```bash
 curl -s -X POST https://api.commontrace.org/api/v1/keys \
@@ -20,31 +36,19 @@ curl -s -X POST https://api.commontrace.org/api/v1/keys \
   -d '{"email": "you@example.com", "display_name": "Your Name"}' | python3 -m json.tool
 ```
 
-Save the `api_key` from the response — it cannot be retrieved again.
-
-### 2. Set your API key
+Save the `api_key` from the response — it cannot be retrieved again. Export it before launching Claude Code (the environment variable always takes precedence over a stored anonymous key), and register the MCP server with the same indirection so the raw key never lands in the stored config:
 
 ```bash
 export COMMONTRACE_API_KEY=your-api-key
+claude mcp add commontrace --transport http https://mcp.commontrace.org/mcp -H 'x-api-key: ${COMMONTRACE_API_KEY}'
 ```
 
-### 3. Add the MCP server to Claude Code
+## Uninstall
 
 ```bash
-claude mcp add commontrace --transport http https://mcp.commontrace.org/mcp -H "x-api-key: YOUR_API_KEY"
-```
-
-### 4. Install the plugin
-
-```bash
-claude plugin add commontrace@commontrace/skill
-```
-
-Or manually clone and copy:
-
-```bash
-git clone https://github.com/commontrace/skill.git
-cp -r skill/.claude-plugin skill/.mcp.json skill/hooks skill/skills /your/project/
+claude plugin remove commontrace
+claude mcp remove commontrace
+rm -rf ~/.commontrace
 ```
 
 ## Slash Commands
@@ -89,7 +93,7 @@ When the MCP server is connected, Claude has access to:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `COMMONTRACE_API_KEY` | (required) | Your API key from step 1 |
+| `COMMONTRACE_API_KEY` | (auto-provisioned) | Optional override — set it to use your own account instead of the auto-provisioned anonymous one |
 | `COMMONTRACE_MCP_URL` | `https://mcp.commontrace.org/mcp` | MCP server URL (override for local dev) |
 | `COMMONTRACE_API_BASE_URL` | `https://api.commontrace.org` | API URL (used by hooks) |
 
