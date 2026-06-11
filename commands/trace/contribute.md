@@ -16,6 +16,7 @@ Run `ls -1 ~/.commontrace/pending/*.jsonl 2>/dev/null` then read each file. Each
 - `suggested_solution_text` — pre-filled solution
 - `suggested_tags` — pre-filled tags
 - `metadata_json` — detection metadata (pass through verbatim on submit)
+- `struggle_grid` — optional share line (emoji struggle grid + stats); not submitted, used for display after a successful contribution
 - `trace_id` — only present for `amend` kind
 
 If there are zero pending candidates, ask the user if they want to contribute a fresh trace from scratch instead. If yes, follow the "Fresh contribution" flow below. If no, exit.
@@ -46,7 +47,7 @@ Call `mcp__plugin_commontrace_commontrace__contribute_trace` with:
 For `kind: amend`:
 Call `mcp__plugin_commontrace_commontrace__amend_trace` with the trace_id and ask the user one short question for the proposed solution_text improvement. Submit.
 
-After successful submit, delete the candidate's line from the pending file (use `sed` or rewrite the file without that line). Report the new trace ID.
+After successful submit, delete the candidate's line from the pending file (use `sed` or rewrite the file without that line). Report the new trace ID. If the candidate has `struggle_grid`, show it to the user with ` → https://commontrace.org/t/<new-trace-id>` appended — it is a paste-anywhere share line.
 
 ### No
 Delete the candidate's line from the pending file. Move to next candidate without further questions.
