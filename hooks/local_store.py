@@ -226,8 +226,10 @@ def _get_conn() -> sqlite3.Connection:
     if DB_PATH.exists():
         try:
             tmp = sqlite3.connect(str(DB_PATH))
-            current_ver = tmp.execute("PRAGMA user_version").fetchone()[0]
-            tmp.close()
+            try:
+                current_ver = tmp.execute("PRAGMA user_version").fetchone()[0]
+            finally:
+                tmp.close()
         except Exception:
             pass
         if current_ver < CURRENT_SCHEMA_VERSION:
