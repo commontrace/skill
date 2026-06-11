@@ -145,3 +145,153 @@ def load_brain_data(conn):
             projects.append({"label": label, "nodes": nodes})
     return {"projects": projects, "solved": solved, "open": open_count,
             "now": now}
+
+
+GOLDEN_ANGLE = 2.399963229728653
+
+
+def _node_positions(n, cx, cy, spread):
+    """Golden-angle spiral: organic, deterministic, no collisions at small n."""
+    positions = []
+    for i in range(n):
+        r = spread * math.sqrt(i + 1)
+        a = i * GOLDEN_ANGLE
+        positions.append((cx + r * math.cos(a), cy + r * math.sin(a)))
+    return positions
+
+
+def _esc(text):
+    return (str(text).replace("&", "&amp;").replace("<", "&lt;")
+            .replace(">", "&gt;").replace('"', "&quot;"))
+
+
+def render_brain_svg(data, width=760, height=520):
+    """Brain graph: one hub per project, error-signature nodes on a
+    golden-angle spiral around it. Node size = intensity, color =
+    temperature, fade = decay; resolved nodes are filled, open nodes
+    hollow. Only numbers and language/framework labels are rendered.
+    Hub orbits can overlap at high project counts — accepted as organic."""
+    parts = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" '
+        f'height="{height}" viewBox="0 0 {width} {height}" role="img">',
+        f'<rect width="{width}" height="{height}" fill="#fcfcf9"/>',
+    ]
+    projects = data.get("projects", [])
+    if not projects:
+        parts.append(
+            f'<text x="{width / 2}" y="{height / 2}" text-anchor="middle" '
+            f'font-family="Georgia, serif" font-size="16" fill="#777">'
+            f'No knowledge captured yet — keep coding.</text>')
+        parts.append("</svg>")
+        return "".join(parts)
+    n = len(projects)
+    orbit = min(width, height) * 0.30 if n > 1 else 0.0
+    for j, project in enumerate(projects):
+        angle = j * (2 * math.pi / n) - math.pi / 2
+        hx = width / 2 + orbit * math.cos(angle)
+        hy = height / 2 + orbit * math.sin(angle)
+        nodes = project["nodes"]
+        positions = _node_positions(len(nodes), hx, hy, 11.0)
+        for node, (x, y) in zip(nodes, positions):
+            color = TEMP_COLORS[node["temperature"]]
+            radius = 3.0 + 8.0 * node["intensity"]
+            if node["resolved"]:
+                parts.append(
+                    f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{radius:.1f}" '
+                    f'fill="{color}" opacity="{node["opacity"]}"/>')
+            else:
+                parts.append(
+                    f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{radius:.1f}" '
+                    f'fill="none" stroke="{color}" stroke-width="1.5" '
+                    f'opacity="{node["opacity"]}"/>')
+        label_y = hy + 11.0 * math.sqrt(len(nodes) + 1) + 18
+        parts.append(
+            f'<text x="{hx:.1f}" y="{label_y:.1f}" text-anchor="middle" '
+            f'font-family="Georgia, serif" font-size="13" fill="#444">'
+            f'{_esc(project["label"])}</text>')
+    stats = (f'{data["solved"]} solved · {data["open"]} open · '
+             f'{n} project{"s" if n != 1 else ""}')
+    parts.append(
+        f'<text x="{width / 2}" y="{height - 16}" text-anchor="middle" '
+        f'font-family="Georgia, serif" font-size="13" fill="#555">'
+        f'{_esc(stats)}</text>')
+    parts.append("</svg>")
+    return "".join(parts)
+
+
+def render_brain_html(data):
+    """Self-contained share page: inline SVG, inline styles, no JS, no
+    external assets. Safe to screenshot — aggregate shapes only."""
+    svg = render_brain_svg(data)
+    date_str = time.strftime(
+        "%B %Y", time.localtime(data.get("now") or time.time()))
+    legend = "".join(
+        f'<span style="white-space:nowrap"><span style="display:inline-block;'
+        f'width:10px;height:10px;border-radius:50%;background:{color};'
+        f'margin:0 4px 0 12px"></span>{label}</span>'
+        for label, color in TEMP_COLORS.items())
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My agent's brain — CommonTrace</title>
+<style>
+  body {{ font-family: Georgia, 'Times New Roman', serif; background: #fcfcf9;
+         color: #202122; max-width: 820px; margin: 2rem auto; padding: 0 1rem; }}
+  h1 {{ font-weight: normal; border-bottom: 1px solid #a2a9b1;
+       padding-bottom: 0.3rem; }}
+  figure {{ margin: 1.5rem 0; }}
+  .legend {{ font-size: 0.85rem; color: #555; }}
+  footer {{ margin-top: 2rem; font-size: 0.8rem; color: #72777d;
+           border-top: 1px solid #eaecf0; padding-top: 0.7rem; }}
+</style>
+</head>
+<body>
+<h1>My agent's brain</h1>
+<p>Every dot is an error signature my coding agent fought and remembered.
+Size is how hard the fight was, color is how recently the knowledge was
+used, fade is decay. Filled dots are solved; hollow dots are still open.</p>
+<figure>{svg}</figure>
+<p class="legend">Temperature:{legend}</p>
+<footer>Generated locally by CommonTrace on {date_str} — your agent's
+memory, on your machine. Aggregate shapes only: no code, no error text,
+no file names ever leave local.db.</footer>
+</body>
+</html>
+"""
+
+
+def render_badge_svg(data, width=360, height=72):
+    """README-embeddable badge: solved count + a dot-strip of the most
+    recent nodes (≤20, truncated to fit)."""
+    nodes = [n for p in data.get("projects", []) for n in p["nodes"]][:20]
+    parts = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" '
+        f'height="{height}" viewBox="0 0 {width} {height}" role="img">',
+        f'<rect x="0.5" y="0.5" width="{width - 1}" height="{height - 1}" '
+        f'rx="8" fill="#fcfcf9" stroke="#a2a9b1"/>',
+        f'<text x="16" y="28" font-family="Georgia, serif" font-size="14" '
+        f'fill="#222">CommonTrace brain</text>',
+        f'<text x="{width - 16}" y="28" text-anchor="end" '
+        f'font-family="Georgia, serif" font-size="14" font-weight="bold" '
+        f'fill="#2e7d32">{data.get("solved", 0)} solved</text>',
+    ]
+    x = 16.0
+    for node in nodes:
+        radius = 3.0 + 4.0 * node["intensity"]
+        if x + 2 * radius > width - 24:
+            break
+        color = TEMP_COLORS[node["temperature"]]
+        if node["resolved"]:
+            parts.append(
+                f'<circle cx="{x + radius:.1f}" cy="50" r="{radius:.1f}" '
+                f'fill="{color}" opacity="{node["opacity"]}"/>')
+        else:
+            parts.append(
+                f'<circle cx="{x + radius:.1f}" cy="50" r="{radius:.1f}" '
+                f'fill="none" stroke="{color}" stroke-width="1.5" '
+                f'opacity="{node["opacity"]}"/>')
+        x += 2 * radius + 5
+    parts.append("</svg>")
+    return "".join(parts)

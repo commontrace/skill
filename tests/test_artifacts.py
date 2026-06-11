@@ -159,3 +159,41 @@ class TestLoadBrainData(HookTestCase):
         self.assertEqual(data["projects"], [])
         self.assertEqual(data["solved"], 0)
         self.assertEqual(data["open"], 0)
+
+
+class TestRenderers(HookTestCase):
+    def test_svgs_parse_and_have_no_leaks(self):
+        conn = self.get_conn()
+        seed_sensitive_project(conn)
+        data = artifacts.load_brain_data(conn)
+        for render in (artifacts.render_brain_svg, artifacts.render_badge_svg):
+            out = render(data)
+            xml.etree.ElementTree.fromstring(out)  # must be well-formed
+            for leak in ("secretuser", "topsecret", "secret_module",
+                         "app.py", "/home"):
+                self.assertNotIn(leak, out)
+
+    def test_html_is_self_contained_and_clean(self):
+        conn = self.get_conn()
+        seed_sensitive_project(conn)
+        data = artifacts.load_brain_data(conn)
+        html = artifacts.render_brain_html(data)
+        self.assertIn("<svg", html)
+        self.assertIn("My agent's brain", html)
+        self.assertNotIn("<script", html)
+        self.assertNotIn("src=", html)
+        for leak in ("secretuser", "topsecret", "secret_module",
+                     "app.py", "/home"):
+            self.assertNotIn(leak, html)
+
+    def test_empty_state_svg(self):
+        out = artifacts.render_brain_svg(
+            {"projects": [], "solved": 0, "open": 0, "now": 0.0})
+        xml.etree.ElementTree.fromstring(out)
+        self.assertIn("No knowledge captured yet", out)
+
+    def test_badge_shows_solved_count(self):
+        conn = self.get_conn()
+        seed_sensitive_project(conn)
+        data = artifacts.load_brain_data(conn)
+        self.assertIn("1 solved", artifacts.render_badge_svg(data))
