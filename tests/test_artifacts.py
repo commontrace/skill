@@ -85,3 +85,43 @@ class TestMonthRange(unittest.TestCase):
     def test_february_leap_year(self):
         start, end = artifacts.month_range(2024, 2)
         self.assertEqual(time.localtime(end)[:3], (2024, 2, 29))
+
+
+class TestStruggleGrid(unittest.TestCase):
+    def test_empty_session_resolved_is_single_green(self):
+        self.assertEqual(artifacts.struggle_grid([], [], resolved=True), "🟩")
+
+    def test_empty_session_unresolved_is_single_idle(self):
+        self.assertEqual(artifacts.struggle_grid([], [], resolved=False), "⬜")
+
+    def test_grid_is_ten_cells_and_ends_green_when_resolved(self):
+        t0 = 1_750_000_000.0
+        errors = [t0, t0 + 60, t0 + 120]
+        changes = [t0 + 300, t0 + 600]
+        grid = artifacts.struggle_grid(errors, changes, resolved=True)
+        cells = list(grid)
+        self.assertEqual(len(cells), 10)
+        self.assertEqual(cells[-1], "🟩")
+        self.assertEqual(cells[0], "🟥")
+
+    def test_error_wins_over_change_in_same_bucket(self):
+        t0 = 1_750_000_000.0
+        grid = artifacts.struggle_grid([t0, t0 + 1000], [t0 + 1],
+                                       resolved=False)
+        self.assertEqual(grid[0], "🟥")
+
+    def test_zero_timestamps_filtered(self):
+        self.assertEqual(artifacts.struggle_grid([0, 0], [0], resolved=True),
+                         "🟩")
+
+
+class TestStruggleLine(unittest.TestCase):
+    def test_line_format_with_trace(self):
+        line = artifacts.struggle_line("🟥🟩", 47.4, 8, trace_id="a3f9")
+        self.assertEqual(
+            line,
+            "🟥🟩 47min · 8 errors · solved → https://commontrace.org/t/a3f9")
+
+    def test_singular_error_no_trace(self):
+        self.assertEqual(artifacts.struggle_line("🟩", 2, 1),
+                         "🟩 2min · 1 error · solved")

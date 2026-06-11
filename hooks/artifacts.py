@@ -60,3 +60,48 @@ def month_range(year, month):
     last_day = calendar.monthrange(year, month)[1]
     end = time.mktime((year, month, last_day, 23, 59, 59, 0, 0, -1))
     return start, end
+
+
+GRID_CELLS = 10
+CELL_ERROR, CELL_WORK, CELL_IDLE, CELL_SOLVED = "🟥", "🟨", "⬜", "🟩"
+
+
+def struggle_grid(error_ts, change_ts, resolved=True):
+    """Wordle-style struggle shape: the session timeline in 10 emoji cells.
+
+    Spoiler-free by construction — built from event timestamps only, never
+    from error text or file names. Red = errors, yellow = work, white =
+    idle; the last cell turns green when the fight was won.
+    """
+    stamps = sorted(t for t in list(error_ts) + list(change_ts) if t)
+    if not stamps:
+        return CELL_SOLVED if resolved else CELL_IDLE
+    start = stamps[0]
+    span = max(stamps[-1] - start, 1.0)
+
+    def bucket(t):
+        return min(int((t - start) / span * GRID_CELLS), GRID_CELLS - 1)
+
+    err_buckets = {bucket(t) for t in error_ts if t}
+    chg_buckets = {bucket(t) for t in change_ts if t}
+    cells = []
+    for i in range(GRID_CELLS):
+        if i in err_buckets:
+            cells.append(CELL_ERROR)
+        elif i in chg_buckets:
+            cells.append(CELL_WORK)
+        else:
+            cells.append(CELL_IDLE)
+    if resolved:
+        cells[-1] = CELL_SOLVED
+    return "".join(cells)
+
+
+def struggle_line(grid, duration_min, error_count, trace_id=""):
+    """The paste-anywhere share line under the grid."""
+    duration = int(round(duration_min))
+    plural = "s" if error_count != 1 else ""
+    line = f"{grid} {duration}min · {error_count} error{plural} · solved"
+    if trace_id:
+        line += f" → {TRACE_URL.format(trace_id)}"
+    return line
