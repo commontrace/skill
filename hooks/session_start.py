@@ -23,7 +23,7 @@ PENDING_DIR = CONFIG_DIR / "pending"
 PING_MARKER = CONFIG_DIR / "last_ping_date"
 API_BASE = "https://api.commontrace.org"
 MCP_URL = "https://mcp.commontrace.org/mcp"
-SKILL_VERSION = "0.2.0"
+SKILL_VERSION = "0.3.0"
 
 SOURCE_EXTENSIONS = {".py", ".ts", ".js", ".tsx", ".jsx", ".go", ".rs", ".java", ".rb"}
 EXTENSION_TO_LANGUAGE = {
