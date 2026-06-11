@@ -197,3 +197,48 @@ class TestRenderers(HookTestCase):
         seed_sensitive_project(conn)
         data = artifacts.load_brain_data(conn)
         self.assertIn("1 solved", artifacts.render_badge_svg(data))
+
+
+class TestCompiledRecap(HookTestCase):
+    def _seed_month(self, conn, year=2026, month=5):
+        pid = local_store.ensure_project(conn, "/test-project")
+        start, _ = artifacts.month_range(year, month)
+        mid = start + 10 * DAY
+        conn.execute(
+            "INSERT INTO sessions (id, project_id, started_at, error_count, "
+            "resolution_count, contribution_count, top_pattern) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("s1", pid, mid, 12, 5, 1, "error_resolution"))
+        conn.execute(
+            "INSERT INTO sessions (id, project_id, started_at, error_count, "
+            "resolution_count, contribution_count, top_pattern) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("s2", pid, mid + DAY, 3, 2, 0, "error_resolution"))
+        conn.execute(
+            "INSERT INTO error_signatures (project_id, signature, created_at, "
+            "last_seen_at, seen_count, resolved_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (pid, "sig-a", mid - DAY, mid, 4, mid))
+        conn.commit()
+
+    def test_recap_contains_own_numbers(self):
+        conn = self.get_conn()
+        self._seed_month(conn)
+        text = artifacts.compiled_recap(conn, 2026, 5)
+        self.assertIn("CommonTrace Compiled — May 2026", text)
+        self.assertIn("2 sessions", text)
+        self.assertIn("15 errors hit · 7 resolutions", text)
+        self.assertIn("1 error signature solved for good", text)
+        self.assertIn("hardest fight: one error took 4 hits", text)
+        self.assertIn("signature move: error resolution", text)
+        self.assertIn("1 trace contributed to the commons", text)
+
+    def test_empty_month_returns_none(self):
+        conn = self.get_conn()
+        self.assertIsNone(artifacts.compiled_recap(conn, 2026, 4))
+
+    def test_no_text_from_db_in_recap(self):
+        conn = self.get_conn()
+        self._seed_month(conn)
+        text = artifacts.compiled_recap(conn, 2026, 5)
+        self.assertNotIn("sig-a", text)
+        self.assertNotIn("/test-project", text)

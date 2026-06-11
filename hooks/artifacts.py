@@ -295,3 +295,63 @@ def render_badge_svg(data, width=360, height=72):
         x += 2 * radius + 5
     parts.append("</svg>")
     return "".join(parts)
+
+
+def compiled_recap(conn, year, month):
+    """Monthly Compiled — the user's own numbers, never an interpretation.
+
+    Returns the recap text, or None when the month had no sessions.
+    Counts only; no signature text, paths, or titles ever appear here.
+    """
+    start, end = month_range(year, month)
+    sess = conn.execute(
+        "SELECT COUNT(*) AS n, SUM(error_count) AS errs, "
+        "SUM(resolution_count) AS fixes, "
+        "SUM(contribution_count) AS contribs "
+        "FROM sessions WHERE started_at BETWEEN ? AND ?",
+        (start, end)).fetchone()
+    if not sess or not sess["n"]:
+        return None
+    solved = conn.execute(
+        "SELECT COUNT(*) AS n, MAX(seen_count) AS worst "
+        "FROM error_signatures WHERE resolved_at BETWEEN ? AND ?",
+        (start, end)).fetchone()
+    assisted = conn.execute(
+        "SELECT COUNT(*) AS n FROM trigger_feedback "
+        "WHERE trigger_name = 'error_recurrence' "
+        "AND trace_consumed_id IS NOT NULL "
+        "AND consumed_at BETWEEN ? AND ?", (start, end)).fetchone()
+    top = conn.execute(
+        "SELECT top_pattern, COUNT(*) AS n FROM sessions "
+        "WHERE started_at BETWEEN ? AND ? AND top_pattern IS NOT NULL "
+        "GROUP BY top_pattern ORDER BY n DESC LIMIT 1",
+        (start, end)).fetchone()
+    label = calendar.month_name[month]
+    lines = [
+        f"CommonTrace Compiled — {label} {year}",
+        "",
+        f"  {sess['n']} session{'s' if sess['n'] != 1 else ''}",
+        f"  {sess['errs'] or 0} errors hit · {sess['fixes'] or 0} resolutions",
+        f"  {solved['n'] or 0} error signature"
+        f"{'s' if (solved['n'] or 0) != 1 else ''} solved for good",
+    ]
+    if assisted and assisted["n"]:
+        lines.append(
+            f"  {assisted['n']} repeat error"
+            f"{'s' if assisted['n'] != 1 else ''} killed by memory — "
+            f"knowledge that bit back")
+    if solved and solved["worst"] and solved["worst"] > 1:
+        lines.append(
+            f"  hardest fight: one error took {solved['worst']} hits "
+            f"before it fell")
+    if top and top["top_pattern"]:
+        lines.append(
+            f"  signature move: {top['top_pattern'].replace('_', ' ')}")
+    if sess["contribs"]:
+        lines.append(
+            f"  {sess['contribs']} trace{'s' if sess['contribs'] != 1 else ''} "
+            f"contributed to the commons")
+    lines.append("")
+    lines.append("  Your agent's own numbers, from your machine. "
+                 "— commontrace.org")
+    return "\n".join(lines)
