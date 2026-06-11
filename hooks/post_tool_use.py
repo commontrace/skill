@@ -29,6 +29,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from session_state import (
     get_state_dir, append_event, read_events, is_config_file,
+    error_signature, error_hash,
 )
 from redact import redact_text, redact_command, is_sensitive_file
 
@@ -254,16 +255,19 @@ def handle_bash(data: dict, state_dir: Path) -> dict | None:
         # M19/M20: Redact secrets before storing or sending
         safe_command = redact_command(command[:200])
         safe_error = redact_text(error_text[:500])
+        # M19: signature computed from REDACTED text — it is stored in local.db
+        sig = error_signature(redact_text(error_text))
 
         append_event(state_dir, "errors.jsonl", {
             "source": "bash",
             "command": safe_command,
             "output_tail": safe_error,
+            "sig": sig,
         })
 
-        # Check for error recurrence in local store (takes priority)
-        # Also stores the error signature for future fuzzy matching
-        recurrence_output = _check_error_recurrence(error_text, state_dir)
+        # Error recurrence: record this occurrence and, if this project has
+        # already resolved the same signature, inject the known fix now.
+        recurrence_output = _check_error_recurrence(sig, state_dir)
         if recurrence_output:
             return recurrence_output
 
@@ -385,26 +389,62 @@ def _read_context_fingerprint(state_dir: Path) -> dict | None:
         return None
 
 
-def _check_error_recurrence(error_text: str, state_dir: Path) -> dict | None:
-    """Record error signature for recurrence detection across sessions."""
-    if is_on_cooldown("error_recurrence",
-                      _get_adaptive_cooldown("error_recurrence", 60, state_dir)):
-        return None
+def _check_error_recurrence(sig: str, state_dir: Path) -> dict | None:
+    """Record this error occurrence; on resolved recurrence, inject the fix.
 
+    Recording is exempt from the cooldown so seen_count stays accurate —
+    the cooldown gates only the injection. Injection fires when this
+    project has already resolved the same signature: the moment a past
+    lesson pays off. The injection is informational (never an instruction
+    to execute), names its provenance, and is remembered in
+    recurrence_injected.jsonl so a subsequent fix counts as an assisted
+    resolution (closes the trigger_feedback loop).
+    """
     project_id = _read_project_id(state_dir)
     if project_id is None:
         return None
 
+    info = None
     try:
         from local_store import _get_conn, record_error_signature
-        from session_state import error_signature
-        sig = error_signature(error_text)
         conn = _get_conn()
-        record_error_signature(conn, project_id, sig)
+        info = record_error_signature(conn, project_id, sig)
         conn.close()
     except Exception:
-        pass
-    return None
+        return None
+
+    if not info or not info.get("recurrence") or not info.get("resolved"):
+        return None
+
+    if is_on_cooldown("error_recurrence",
+                      _get_adaptive_cooldown("error_recurrence", 60, state_dir)):
+        return None
+    set_cooldown("error_recurrence")
+    _record_trigger_safe(state_dir, "error_recurrence")
+    append_event(state_dir, "recurrence_injected.jsonl", {"sig": sig})
+
+    when = time.strftime("%Y-%m-%d",
+                         time.localtime(info.get("last_seen_at", 0)))
+    parts = [
+        f"CommonTrace: this error has hit this project before "
+        f"(seen {info['seen_count']} times, last {when}) and was solved."
+    ]
+    if info.get("fix_command"):
+        parts.append(f"The fix was verified with: `{info['fix_command']}`.")
+    files = info.get("fix_files") or []
+    if files:
+        parts.append("Files changed for the fix: "
+                     + ", ".join(files[:5]) + ".")
+    if info.get("trace_id"):
+        parts.append(f"Full solution: use get_trace with ID "
+                     f"{info['trace_id']}.")
+    parts.append("(Source: this project's local CommonTrace history.)")
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PostToolUse",
+            "additionalContext": " ".join(parts),
+        }
+    }
 
 
 def _check_domain_entry(file_path: str, state_dir: Path) -> dict | None:
