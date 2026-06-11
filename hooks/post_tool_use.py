@@ -306,6 +306,7 @@ def handle_bash(data: dict, state_dir: Path) -> dict | None:
                 "output_preview": redact_text(output[:200]) if output else "",
                 "errors_before": len(previous_errors),
             })
+            _pair_resolution(state_dir, command, previous_errors)
 
     return None
 
@@ -387,6 +388,93 @@ def _read_context_fingerprint(state_dir: Path) -> dict | None:
         )
     except (json.JSONDecodeError, OSError, FileNotFoundError):
         return None
+
+
+def _command_head(command: str) -> str:
+    """First meaningful token of a shell command, skipping VAR=val prefixes.
+
+    Known limitation (accepted): compound commands ("cd x && pytest") yield
+    the first command's head. Pairing is a heuristic, not a proof.
+    """
+    for tok in command.split():
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tok):
+            continue
+        return tok
+    return ""
+
+
+def _pair_resolution(state_dir: Path, command: str,
+                     previous_errors: list[dict]) -> None:
+    """Pair a succeeding command with a prior error of the same command head.
+
+    Structural signal: the command that failed now succeeds. Stores the fix
+    (verification command + basenames of files changed since the error +
+    any commons trace consumed since the error) on the signature row —
+    the payload _check_error_recurrence injects when the signature recurs.
+    If this signature's fix was injected earlier this session, the
+    resolution is recorded as a consumed trigger (assisted resolution),
+    which feeds the error_recurrence rate in the existing M22-gated
+    telemetry. Never raises.
+    """
+    try:
+        head = _command_head(command)
+        if not head:
+            return
+        match = None
+        for entry in reversed(previous_errors):
+            if entry.get("source") != "bash" or not entry.get("sig"):
+                continue
+            if _command_head(entry.get("command", "")) == head:
+                match = entry
+                break
+        if match is None:
+            return
+        project_id = _read_project_id(state_dir)
+        if project_id is None:
+            return
+        err_t = match.get("t", 0)
+
+        # Files changed between the error and this success = the fix.
+        # Basenames only — full paths can contain usernames.
+        fix_files = []
+        for ch in read_events(state_dir, "changes.jsonl"):
+            if ch.get("t", 0) >= err_t and ch.get("file"):
+                name = Path(ch["file"]).name
+                if name not in fix_files:
+                    fix_files.append(name)
+
+        from local_store import (
+            _get_conn, record_resolution, record_trace_consumed,
+        )
+        conn = _get_conn()
+        # Commons trace consumed since the error → attribute it to the fix
+        trace_id = None
+        try:
+            row = conn.execute(
+                "SELECT trace_consumed_id FROM trigger_feedback "
+                "WHERE session_id = ? AND trace_consumed_id IS NOT NULL "
+                "AND consumed_at >= ? ORDER BY consumed_at DESC LIMIT 1",
+                (state_dir.name, err_t),
+            ).fetchone()
+            if row:
+                trace_id = row["trace_consumed_id"]
+        except Exception:
+            trace_id = None
+
+        record_resolution(conn, project_id, match["sig"],
+                          fix_command=redact_command(command[:200]),
+                          fix_files=fix_files[:10],
+                          trace_id=trace_id)
+
+        # Assisted resolution: fix injected earlier this session → it landed
+        injected = {e.get("sig") for e in
+                    read_events(state_dir, "recurrence_injected.jsonl")}
+        if match["sig"] in injected:
+            record_trace_consumed(conn, state_dir.name,
+                                  "local:" + error_hash(match["sig"]))
+        conn.close()
+    except Exception:
+        pass
 
 
 def _check_error_recurrence(sig: str, state_dir: Path) -> dict | None:
