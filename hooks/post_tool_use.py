@@ -122,13 +122,45 @@ def set_cooldown(trigger_name: str) -> None:
         pass
 
 
+EXPLORATION_EVERY = 10  # every Nth suppressed check fires anyway (epsilon floor)
+
+
+def _exploration_due(trigger_name: str) -> bool:
+    """Deterministic epsilon-greedy floor for suppressed triggers.
+
+    Counts suppressed-eligible checks per trigger; every
+    EXPLORATION_EVERY-th check is allowed through at the base cooldown.
+    Guarantees a suppressed trigger keeps sampling reality and can earn
+    its way back when the corpus or the project changes — the search
+    rate never decays to zero (spec §4.1).
+    """
+    COOLDOWN_DIR.mkdir(parents=True, exist_ok=True)
+    path = COOLDOWN_DIR / f"{trigger_name}.suppressed"
+    try:
+        count = int(path.read_text(encoding="utf-8")) if path.exists() else 0
+    except (ValueError, OSError):
+        count = 0
+    count += 1
+    try:
+        path.write_text(str(count), encoding="utf-8")
+    except OSError:
+        return False
+    return count % EXPLORATION_EVERY == 0
+
+
 def _get_adaptive_cooldown(trigger_name: str, base_seconds: int,
                            state_dir: Path) -> int:
     """Scale cooldown by trigger conversion rate from trigger_feedback.
 
     >= 40% rate → 0.5x cooldown (more aggressive — trigger is effective)
-    < 5% after 20+ firings → 3x cooldown (effectively suppress — not useful)
+    < 5% after 20+ firings → 3x cooldown, with an epsilon-greedy floor:
+        every EXPLORATION_EVERY-th suppressed check goes through at the
+        base cooldown, so suppression is never permanent.
     Default: no change
+
+    Stats come from trigger_stats.json (written by session_start from
+    get_trigger_effectiveness, key "fired"; "total" kept as a legacy
+    fallback for old bridge files).
     """
     try:
         stats_path = state_dir / "trigger_stats.json"
@@ -138,9 +170,11 @@ def _get_adaptive_cooldown(trigger_name: str, base_seconds: int,
         trigger_data = stats.get(trigger_name)
         if not trigger_data:
             return base_seconds
-        total = trigger_data.get("total", 0)
+        fired = trigger_data.get("fired", trigger_data.get("total", 0))
         rate = trigger_data.get("rate", 0)
-        if total >= 20 and rate < 0.05:
+        if fired >= 20 and rate < 0.05:
+            if _exploration_due(trigger_name):
+                return base_seconds
             return base_seconds * 3
         if rate >= 0.4:
             return max(base_seconds // 2, 5)
