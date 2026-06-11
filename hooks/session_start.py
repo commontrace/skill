@@ -295,6 +295,52 @@ def count_pending_traces() -> int:
     return total
 
 
+def _compiled_drop(config):
+    """Monthly Compiled recap — fires once on the first session of each
+    month, covering the previous month. The user's own numbers, generated
+    locally; never an interpretation.
+
+    The "last_compiled_month" marker is set even when the month was empty
+    (one db query per month, then silence). Returns additionalContext
+    text, or None.
+    """
+    import time as _time
+    t = _time.localtime()
+    current = f"{t.tm_year}-{t.tm_mon:02d}"
+    if config.get("last_compiled_month") == current:
+        return None
+    if t.tm_mon > 1:
+        year, month = t.tm_year, t.tm_mon - 1
+    else:
+        year, month = t.tm_year - 1, 12
+    text = None
+    path = None
+    try:
+        sys.path.insert(0, str(Path(__file__).parent))
+        from artifacts import compiled_recap, write_artifact
+        from local_store import _get_conn
+        conn = _get_conn()
+        try:
+            text = compiled_recap(conn, year, month)
+        finally:
+            conn.close()
+        if text:
+            path = write_artifact(f"compiled-{year}-{month:02d}.txt", text)
+    except Exception:
+        return None
+    config["last_compiled_month"] = current
+    try:
+        save_config(config)
+    except OSError:
+        pass
+    if not text:
+        return None
+    return (f"CommonTrace monthly Compiled recap is ready "
+            f"(saved to {path}):\n\n{text}\n\n"
+            f"Mention it to the user at a natural moment — it is their "
+            f"own data, generated locally.")
+
+
 def format_result(result: dict) -> str:
     title = result.get("title", "Untitled")
     context_text = result.get("context_text", "")[:100]
@@ -438,6 +484,15 @@ def main() -> None:
                 f"review them. Do not proactively prompt — only mention if the "
                 f"user asks about CommonTrace."
             )
+
+    # Monthly Compiled drop (first session of a new month → previous
+    # month's numbers). Local-only; must never block session start.
+    try:
+        recap_note = _compiled_drop(config)
+        if recap_note:
+            additional_context += f"\n\n{recap_note}"
+    except Exception:
+        pass
 
     output = {
         "hookSpecificOutput": {
