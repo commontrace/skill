@@ -170,7 +170,7 @@ class TestRenderers(HookTestCase):
             out = render(data)
             xml.etree.ElementTree.fromstring(out)  # must be well-formed
             for leak in ("secretuser", "topsecret", "secret_module",
-                         "app.py", "/home"):
+                         "secret_func", "app.py", "lib.py", "/home"):
                 self.assertNotIn(leak, out)
 
     def test_html_is_self_contained_and_clean(self):
@@ -183,7 +183,7 @@ class TestRenderers(HookTestCase):
         self.assertNotIn("<script", html)
         self.assertNotIn("src=", html)
         for leak in ("secretuser", "topsecret", "secret_module",
-                     "app.py", "/home"):
+                     "secret_func", "app.py", "lib.py", "/home"):
             self.assertNotIn(leak, html)
 
     def test_empty_state_svg(self):
