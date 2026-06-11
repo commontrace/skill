@@ -1,7 +1,7 @@
 """Shared test base: isolates every test from the real ~/.commontrace.
 
-Patches the module-level path constants in local_store and post_tool_use
-so tests never touch the developer's real local.db, cooldowns, or config,
+Patches the module-level path constants in artifacts, local_store, and
+post_tool_use so tests never touch the developer's real local.db, cooldowns, or config,
 and never make network calls (no API key resolvable).
 """
 
@@ -15,6 +15,7 @@ from unittest import mock
 HOOKS_DIR = Path(__file__).resolve().parent.parent / "hooks"
 sys.path.insert(0, str(HOOKS_DIR))
 
+import artifacts  # noqa: E402
 import local_store  # noqa: E402
 import post_tool_use  # noqa: E402
 from session_state import append_event, read_events  # noqa: E402,F401
@@ -29,6 +30,7 @@ class HookTestCase(unittest.TestCase):
         self.tmp_path = Path(tmp.name)
 
         for target, attr, value in [
+            (artifacts, "ARTIFACTS_DIR", self.tmp_path / "artifacts"),
             (local_store, "DB_PATH", self.tmp_path / "local.db"),
             (post_tool_use, "COOLDOWN_DIR", self.tmp_path / "cooldowns"),
             (post_tool_use, "CONFIG_FILE", self.tmp_path / "no-config.json"),
