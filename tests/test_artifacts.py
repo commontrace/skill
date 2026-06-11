@@ -125,3 +125,37 @@ class TestStruggleLine(unittest.TestCase):
     def test_singular_error_no_trace(self):
         self.assertEqual(artifacts.struggle_line("🟩", 2, 1),
                          "🟩 2min · 1 error · solved")
+
+
+class TestLoadBrainData(HookTestCase):
+    def test_counts_and_label(self):
+        conn = self.get_conn()
+        seed_sensitive_project(conn)
+        data = artifacts.load_brain_data(conn)
+        self.assertEqual(data["solved"], 1)
+        self.assertEqual(data["open"], 1)
+        self.assertEqual(len(data["projects"]), 1)
+        self.assertEqual(data["projects"][0]["label"], "python/fastapi")
+        self.assertEqual(len(data["projects"][0]["nodes"]), 2)
+
+    def test_nodes_carry_no_text_from_db(self):
+        conn = self.get_conn()
+        seed_sensitive_project(conn)
+        blob = json.dumps(artifacts.load_brain_data(conn))
+        for leak in ("secretuser", "topsecret", "secret_module",
+                     "secret_func", "app.py", "lib.py", "/home"):
+            self.assertNotIn(leak, blob)
+
+    def test_node_shape(self):
+        conn = self.get_conn()
+        seed_sensitive_project(conn)
+        node = artifacts.load_brain_data(conn)["projects"][0]["nodes"][0]
+        self.assertEqual(set(node), {"intensity", "temperature", "resolved",
+                                     "age_days", "opacity"})
+
+    def test_empty_db(self):
+        conn = self.get_conn()
+        data = artifacts.load_brain_data(conn)
+        self.assertEqual(data["projects"], [])
+        self.assertEqual(data["solved"], 0)
+        self.assertEqual(data["open"], 0)

@@ -105,3 +105,43 @@ def struggle_line(grid, duration_min, error_count, trace_id=""):
     if trace_id:
         line += f" → {TRACE_URL.format(trace_id)}"
     return line
+
+
+def load_brain_data(conn):
+    """Brain-graph dataset. No text leaves the rows: nodes carry only
+    numbers; project hubs carry only language/framework labels (never
+    paths). Caps: 12 most-recent projects × 60 most-recent signatures."""
+    now = time.time()
+    projects = []
+    solved = 0
+    open_count = 0
+    rows = conn.execute(
+        "SELECT p.id, p.language, p.framework FROM projects p "
+        "ORDER BY p.last_seen_at DESC LIMIT 12").fetchall()
+    for p in rows:
+        label = "/".join(x for x in (p["language"], p["framework"]) if x) \
+            or "project"
+        sigs = conn.execute(
+            "SELECT seen_count, created_at, last_seen_at, resolved_at "
+            "FROM error_signatures WHERE project_id = ? "
+            "ORDER BY last_seen_at DESC LIMIT 60", (p["id"],)).fetchall()
+        nodes = []
+        for s in sigs:
+            resolved = s["resolved_at"] is not None
+            age_days = max(0.0, (now - s["last_seen_at"]) / 86400)
+            nodes.append({
+                "intensity": intensity(s["seen_count"], s["created_at"],
+                                       s["resolved_at"]),
+                "temperature": temperature(s["last_seen_at"], now),
+                "resolved": resolved,
+                "age_days": round(age_days, 1),
+                "opacity": round(1.0 - 0.6 * min(age_days / 365.0, 1.0), 2),
+            })
+            if resolved:
+                solved += 1
+            else:
+                open_count += 1
+        if nodes:
+            projects.append({"label": label, "nodes": nodes})
+    return {"projects": projects, "solved": solved, "open": open_count,
+            "now": now}
