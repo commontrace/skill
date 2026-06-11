@@ -326,13 +326,77 @@ def get_project_context(conn: sqlite3.Connection, cwd: str) -> dict | None:
 # ---------------------------------------------------------------------------
 
 def record_error_signature(conn: sqlite3.Connection, project_id: int,
-                           signature: str) -> None:
-    """Record an error signature for recurrence detection."""
+                           signature: str) -> dict:
+    """Upsert an error-signature occurrence and return recurrence info.
+
+    Returns: {recurrence, seen_count, resolved, fix_command, fix_files,
+    trace_id, last_seen_at}. The fix payload fields stay None/[] until
+    record_resolution() pairs a verified fix to this signature; once set,
+    they are what error-time injection replays on recurrence.
+    last_seen_at is the PREVIOUS sighting (display: "last hit on <date>").
+    """
+    now = time.time()
+    row = conn.execute(
+        "SELECT seen_count, last_seen_at, resolved_at, fix_command, "
+        "fix_files, trace_id FROM error_signatures "
+        "WHERE project_id = ? AND signature = ?",
+        (project_id, signature),
+    ).fetchone()
+    if row is None:
+        conn.execute(
+            "INSERT INTO error_signatures "
+            "(project_id, signature, created_at, last_seen_at, seen_count) "
+            "VALUES (?, ?, ?, ?, 1)",
+            (project_id, signature, now, now),
+        )
+        conn.commit()
+        return {"recurrence": False, "seen_count": 1, "resolved": False,
+                "fix_command": None, "fix_files": [], "trace_id": None,
+                "last_seen_at": now}
     conn.execute(
-        "INSERT INTO error_signatures (project_id, signature, created_at) VALUES (?, ?, ?)",
-        (project_id, signature, time.time()),
+        "UPDATE error_signatures SET seen_count = seen_count + 1, "
+        "last_seen_at = ? WHERE project_id = ? AND signature = ?",
+        (now, project_id, signature),
     )
     conn.commit()
+    fix_files = []
+    if row["fix_files"]:
+        try:
+            fix_files = json.loads(row["fix_files"])
+        except (json.JSONDecodeError, TypeError):
+            fix_files = []
+    return {
+        "recurrence": True,
+        "seen_count": row["seen_count"] + 1,
+        "resolved": row["resolved_at"] is not None,
+        "fix_command": row["fix_command"],
+        "fix_files": fix_files,
+        "trace_id": row["trace_id"],
+        "last_seen_at": row["last_seen_at"],
+    }
+
+
+def record_resolution(conn: sqlite3.Connection, project_id: int,
+                      signature: str, fix_command: str = None,
+                      fix_files: list = None, trace_id: str = None) -> bool:
+    """Attach a verified fix to an error signature.
+
+    Called when a previously-failing command succeeds. COALESCE keeps an
+    earlier non-null payload when a later resolution passes None.
+    Returns True if a signature row was updated.
+    """
+    cur = conn.execute(
+        "UPDATE error_signatures SET resolved_at = ?, "
+        "fix_command = COALESCE(?, fix_command), "
+        "fix_files = COALESCE(?, fix_files), "
+        "trace_id = COALESCE(?, trace_id) "
+        "WHERE project_id = ? AND signature = ?",
+        (time.time(), fix_command,
+         json.dumps(fix_files) if fix_files else None,
+         trace_id, project_id, signature),
+    )
+    conn.commit()
+    return cur.rowcount > 0
 
 
 # ---------------------------------------------------------------------------
@@ -459,7 +523,7 @@ def prune_stale_cache(conn: sqlite3.Connection) -> None:
     - trace_cache (unused): 30 days after first seen
     - trace_cache (downvoted): 7 days after last seen
     - trigger_feedback: 60 days
-    - error_signatures: 90 days
+    - error_signatures: 90 days unresolved, 180 days resolved (a stored fix is the product — keep it longer)
     """
     now = time.time()
     conn.execute(
@@ -479,8 +543,14 @@ def prune_stale_cache(conn: sqlite3.Connection) -> None:
         (now - 60 * 86400,),
     )
     conn.execute(
-        "DELETE FROM error_signatures WHERE created_at < ?",
+        "DELETE FROM error_signatures "
+        "WHERE resolved_at IS NULL AND last_seen_at < ?",
         (now - 90 * 86400,),
+    )
+    conn.execute(
+        "DELETE FROM error_signatures "
+        "WHERE resolved_at IS NOT NULL AND last_seen_at < ?",
+        (now - 180 * 86400,),
     )
     conn.commit()
     conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
