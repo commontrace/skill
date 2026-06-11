@@ -2,10 +2,13 @@
 """
 CommonTrace SessionStart hook.
 
-On first run: auto-generates an API key, stores it, and configures the MCP server.
-On every run: detects coding context, queries CommonTrace, injects relevant traces.
+First run: auto-provisions an anonymous API key (zero-decision onboarding),
+stores it in ~/.commontrace/config.json, registers the MCP server, and
+queues a one-time disclosure notice. If provisioning fails, a one-time
+setup notice is emitted and provisioning retries silently on later sessions.
+Every run: detects coding context, queries CommonTrace, injects relevant traces.
 
-Exits 0 silently on any error — never blocks session start.
+Never blocks session start — failures degrade to a short notice or silence.
 """
 
 import json
@@ -24,6 +27,14 @@ PING_MARKER = CONFIG_DIR / "last_ping_date"
 API_BASE = "https://api.commontrace.org"
 MCP_URL = "https://mcp.commontrace.org/mcp"
 SKILL_VERSION = "0.4.0"
+
+SETUP_FAILED_NOTICE = (
+    "CommonTrace setup could not complete (API unreachable). The skill will "
+    "retry automatically next session; local knowledge tracking works in the "
+    "meantime. To configure manually, set the COMMONTRACE_API_KEY environment "
+    "variable — see https://github.com/commontrace/skill#install. Mention "
+    "this to the user only if they ask about CommonTrace."
+)
 
 SOURCE_EXTENSIONS = {".py", ".ts", ".js", ".tsx", ".jsx", ".go", ".rs", ".java", ".rb"}
 EXTENSION_TO_LANGUAGE = {
@@ -363,6 +374,26 @@ def format_result(result: dict) -> str:
         parts.append(f"(trace ID: {trace_id})")
     return " ".join(parts)
 
+def _emit_setup_notice() -> None:
+    """One-time notice when provisioning failed — replaces the old silent exit.
+
+    Shown once ever (setup_notice_shown flag); provisioning itself still
+    retries silently on every later session start.
+    """
+    config = load_config()
+    if config.get("setup_notice_shown"):
+        return
+    config["setup_notice_shown"] = True
+    try:
+        save_config(config)
+    except OSError:
+        pass
+    print(json.dumps({
+        "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": SETUP_FAILED_NOTICE,
+        }
+    }))
 
 def main() -> None:
     try:
@@ -374,6 +405,7 @@ def main() -> None:
     # Step 1: Ensure API key + MCP configured (auto-provisions on first run)
     api_key = ensure_setup()
     if not api_key:
+        _emit_setup_notice()
         return
 
     # Step 1b: Daily DAU heartbeat (silent, rate-limited to 1/day locally)

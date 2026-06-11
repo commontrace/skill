@@ -103,3 +103,25 @@ class TestEnsureSetup(OnboardingTestCase):
             saved = json.loads(
                 session_start.CONFIG_FILE.read_text(encoding="utf-8"))
             self.assertNotIn("api_key", saved)
+
+
+class TestSetupFailedNotice(OnboardingTestCase):
+    def _run_main(self):
+        out = io.StringIO()
+        with mock.patch.object(session_start, "provision_api_key",
+                               return_value=None), \
+             mock.patch.object(sys, "stdin", io.StringIO("{}")), \
+             redirect_stdout(out):
+            session_start.main()
+        return out.getvalue()
+
+    def test_failure_emits_notice_once_then_silent(self):
+        first = self._run_main()
+        payload = json.loads(first)
+        self.assertEqual(
+            payload["hookSpecificOutput"]["hookEventName"], "SessionStart")
+        ctx = payload["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("CommonTrace setup could not complete", ctx)
+
+        second = self._run_main()
+        self.assertEqual(second, "")
