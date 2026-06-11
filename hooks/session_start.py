@@ -15,8 +15,10 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.request
+import uuid
 from pathlib import Path
 
 
@@ -52,6 +54,16 @@ FIRST_RUN_NOTICE = (
     "onward."
 )
 
+FIRST_RUN_NOTICE_DEGRADED = (
+    "CommonTrace first-run notice — relay this to the user in one short "
+    "paragraph at the start of your reply: CommonTrace is connected but MCP "
+    "tool registration did not complete automatically. The API key is stored "
+    "at ~/.commontrace/config.json. To register the MCP server manually run: "
+    "claude mcp add commontrace --transport http https://mcp.commontrace.org/mcp "
+    "-H 'x-api-key: <your-key>' -s user  (replace <your-key> with the value "
+    "in config.json). Do not include the actual key in your reply to the user."
+)
+
 SOURCE_EXTENSIONS = {".py", ".ts", ".js", ".tsx", ".jsx", ".go", ".rs", ".java", ".rb"}
 EXTENSION_TO_LANGUAGE = {
     ".py": "python", ".ts": "typescript", ".tsx": "typescript",
@@ -71,11 +83,29 @@ def load_config() -> dict:
 
 
 def save_config(config: dict) -> None:
-    """Persist config to ~/.commontrace/config.json."""
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
-    CONFIG_FILE.write_text(json.dumps(config, indent=2), encoding="utf-8")
-    # H7: Restrict file permissions — owner read/write only
-    os.chmod(CONFIG_FILE, 0o600)
+    """Persist config to ~/.commontrace/config.json atomically (crash-safe).
+
+    Uses tempfile.mkstemp in the same directory + os.replace so a crash
+    mid-write cannot corrupt config.json. Permissions are set to 0o600
+    before the rename so the file is never world-readable even briefly.
+    """
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        CONFIG_DIR.chmod(0o700)
+        fd, tmp_path = tempfile.mkstemp(dir=CONFIG_DIR)
+        try:
+            os.chmod(tmp_path, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(config, fh, indent=2)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+        os.replace(tmp_path, CONFIG_FILE)
+    except OSError:
+        return
 
 
 def provision_api_key() -> str | None:
@@ -152,7 +182,7 @@ def maybe_ping(api_key: str) -> None:
 
 
 def configure_mcp(api_key: str) -> bool:
-    """Run `claude mcp add` to register the MCP server with the API key.
+    """Register the MCP server via `claude mcp add` (idempotent remove-then-add).
 
     The raw key is embedded in the stored MCP config deliberately. This
     function only runs right after auto-provisioning, when no
@@ -162,8 +192,19 @@ def configure_mcp(api_key: str) -> bool:
     anonymous, low-value credential, and the argv exposure window is the
     few seconds `claude mcp add` runs. Manual installs that export the
     env var never reach this code path.
+
+    The remove step is best-effort (ignore return code) so re-running
+    after a partial failure always produces a clean registration.
     """
     try:
+        # Best-effort remove first (idempotency — ignore all errors)
+        try:
+            subprocess.run(
+                ["claude", "mcp", "remove", "commontrace", "-s", "user"],
+                capture_output=True, text=True, timeout=10,
+            )
+        except Exception:
+            pass  # Remove failure must not prevent add
         result = subprocess.run(
             [
                 "claude", "mcp", "add", "commontrace",
@@ -175,7 +216,7 @@ def configure_mcp(api_key: str) -> bool:
             capture_output=True, text=True, timeout=10,
         )
         return result.returncode == 0
-    except (OSError, subprocess.TimeoutExpired):
+    except Exception:
         return False
 
 
@@ -188,41 +229,117 @@ def ensure_setup() -> str | None:
     (pending_first_run_notice) that main() delivers and clears. A failed
     provisioning attempt stores nothing, so every later session start
     retries until it succeeds.
+
+    Concurrency: a POSIX fcntl exclusive lock on the config dir prevents
+    duplicate provisioning when two sessions start simultaneously. The
+    loser re-reads config after acquiring the lock and, if a key was
+    already written by the winner, returns that key without re-queuing
+    any notices.
+
+    MCP registration: configure_mcp() return value is stored in
+    mcp_configured. On failure, FIRST_RUN_NOTICE_DEGRADED is queued
+    instead of FIRST_RUN_NOTICE so the user gets actionable guidance.
     """
     config = load_config()
 
     # Check env var first (user override)
     api_key = os.environ.get("COMMONTRACE_API_KEY", "")
     if api_key:
+        updated = False
         if not config.get("api_key"):
             config["api_key"] = api_key
+            updated = True
+        # Fix I3: If anonymous key was auto-provisioned and env var now set,
+        # re-register MCP with env-var indirection so manual key takes effect.
+        # Gated strictly on anonymous provenance — never touch MCP for manual installs.
+        if config.get("anonymous") and not config.get("env_mcp_reconfigured"):
+            configure_mcp("${COMMONTRACE_API_KEY}")
+            config["env_mcp_reconfigured"] = True
+            updated = True
+        if updated:
             save_config(config)
         return api_key
 
     # Check stored config
     api_key = config.get("api_key", "")
     if api_key:
+        # Retry MCP registration if it failed previously
+        if config.get("mcp_configured") is False:
+            mcp_ok = configure_mcp(api_key)
+            if mcp_ok:
+                fresh = load_config()
+                fresh["mcp_configured"] = True
+                fresh.pop("pending_first_run_notice", None)
+                fresh["pending_first_run_notice"] = True
+                save_config(fresh)
         return api_key
 
     # First run: auto-provision an anonymous account.
-    api_key = provision_api_key()
-    if not api_key:
-        return None
-
-    config["api_key"] = api_key
-    config["pending_first_run_notice"] = True
-    save_config(config)
-
-    # Configure MCP server for future sessions
-    configure_mcp(api_key)
-
-    # Fire-and-forget install beacon (silent on failure)
+    # Use fcntl lock to prevent duplicate provisioning from concurrent sessions.
     try:
-        report_install(api_key)
-    except Exception:
-        pass
+        import fcntl
+        _lock_available = True
+    except ImportError:
+        _lock_available = False
 
-    return api_key
+    lock_fd = None
+    try:
+        if _lock_available:
+            try:
+                CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+                lock_fd = open(CONFIG_DIR / ".provision_lock", "w")
+                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except (OSError, BlockingIOError):
+                # Another session is provisioning — wait for it, then re-read
+                if lock_fd is not None:
+                    try:
+                        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+                    except OSError:
+                        pass
+                refreshed = load_config()
+                winner_key = refreshed.get("api_key", "")
+                if lock_fd is not None:
+                    try:
+                        lock_fd.close()
+                    except OSError:
+                        pass
+                return winner_key or None
+
+        # We hold the lock (or fcntl unavailable) — re-check under lock
+        config = load_config()
+        api_key = config.get("api_key", "")
+        if api_key:
+            return api_key
+
+        api_key = provision_api_key()
+        if not api_key:
+            return None
+
+        mcp_ok = configure_mcp(api_key)
+
+        config["api_key"] = api_key
+        config["anonymous"] = True
+        config["mcp_configured"] = mcp_ok
+        if mcp_ok:
+            config["pending_first_run_notice"] = True
+        else:
+            config["pending_first_run_notice_degraded"] = True
+        save_config(config)
+
+        # Fire-and-forget install beacon (silent on failure)
+        try:
+            report_install(api_key)
+        except Exception:
+            pass
+
+        return api_key
+
+    finally:
+        if lock_fd is not None:
+            try:
+                lock_fd.close()
+            except OSError:
+                pass
 
 
 def detect_context(cwd: str) -> str | None:
@@ -337,6 +454,11 @@ def _compiled_drop(config):
     The "last_compiled_month" marker is set even when the month was empty
     (one db query per month, then silence). Returns additionalContext
     text, or None.
+
+    Note: directories that do not emit context (no .git, no source files)
+    return before reaching this function — the marker is therefore only
+    set when the session actually produces output, deferring the drop
+    until the first context-emitting session of the month.
     """
     import time as _time
     t = _time.localtime()
@@ -362,9 +484,15 @@ def _compiled_drop(config):
             path = write_artifact(f"compiled-{year}-{month:02d}.txt", text)
     except Exception:
         return None
+    # Fix I1: Re-load config from disk before writing the marker to avoid
+    # overwriting flags written by other hooks between session_start's
+    # initial load and this point.
+    fresh = load_config()
+    fresh["last_compiled_month"] = current
+    # Keep the caller's in-memory dict consistent with what was persisted.
     config["last_compiled_month"] = current
     try:
-        save_config(config)
+        save_config(fresh)
     except OSError:
         pass
     if not text:
@@ -458,7 +586,7 @@ def main() -> None:
 
     # Step 2b: Persistent local store — register project + build context
     context_dict = None
-    session_id = data.get("session_id") or str(os.getppid())
+    session_id = data.get("session_id") or f"unknown-{uuid.uuid4().hex[:12]}"
     contribution_recall = ""
     try:
         from local_store import (
@@ -546,6 +674,13 @@ def main() -> None:
     if config.get("pending_first_run_notice"):
         additional_context = f"{FIRST_RUN_NOTICE}\n\n{additional_context}"
         config.pop("pending_first_run_notice", None)
+        try:
+            save_config(config)
+        except OSError:
+            pass
+    elif config.get("pending_first_run_notice_degraded"):
+        additional_context = f"{FIRST_RUN_NOTICE_DEGRADED}\n\n{additional_context}"
+        config.pop("pending_first_run_notice_degraded", None)
         try:
             save_config(config)
         except OSError:
