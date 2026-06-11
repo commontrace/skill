@@ -52,3 +52,54 @@ class TestConfigureMcp(OnboardingTestCase):
                 session_start.subprocess, "run",
                 side_effect=FileNotFoundError("claude not found")):
             self.assertFalse(session_start.configure_mcp("k"))
+
+
+def _provision_forbidden():
+    raise AssertionError("provision_api_key must not be called")
+
+
+class TestEnsureSetup(OnboardingTestCase):
+    def test_first_run_auto_provisions_anonymous_key(self):
+        mcp_calls = []
+        with mock.patch.object(session_start, "provision_api_key",
+                               return_value="ct_live_abc"), \
+             mock.patch.object(session_start, "configure_mcp",
+                               side_effect=lambda k: mcp_calls.append(k) or True), \
+             mock.patch.object(session_start, "report_install"):
+            key = session_start.ensure_setup()
+
+        self.assertEqual(key, "ct_live_abc")
+        self.assertEqual(mcp_calls, ["ct_live_abc"])
+        saved = json.loads(
+            session_start.CONFIG_FILE.read_text(encoding="utf-8"))
+        self.assertEqual(saved["api_key"], "ct_live_abc")
+        self.assertTrue(saved["pending_first_run_notice"])
+        mode = session_start.CONFIG_FILE.stat().st_mode & 0o777
+        self.assertEqual(mode, 0o600)
+
+    def test_env_var_short_circuits_provisioning(self):
+        os.environ["COMMONTRACE_API_KEY"] = "env_key"
+        self.addCleanup(os.environ.pop, "COMMONTRACE_API_KEY", None)
+        with mock.patch.object(session_start, "provision_api_key",
+                               side_effect=_provision_forbidden):
+            key = session_start.ensure_setup()
+        self.assertEqual(key, "env_key")
+        saved = json.loads(
+            session_start.CONFIG_FILE.read_text(encoding="utf-8"))
+        self.assertEqual(saved["api_key"], "env_key")
+        self.assertNotIn("pending_first_run_notice", saved)
+
+    def test_stored_key_short_circuits_provisioning(self):
+        session_start.save_config({"api_key": "stored_key"})
+        with mock.patch.object(session_start, "provision_api_key",
+                               side_effect=_provision_forbidden):
+            self.assertEqual(session_start.ensure_setup(), "stored_key")
+
+    def test_provision_failure_returns_none_and_leaves_no_key(self):
+        with mock.patch.object(session_start, "provision_api_key",
+                               return_value=None):
+            self.assertIsNone(session_start.ensure_setup())
+        if session_start.CONFIG_FILE.exists():
+            saved = json.loads(
+                session_start.CONFIG_FILE.read_text(encoding="utf-8"))
+            self.assertNotIn("api_key", saved)

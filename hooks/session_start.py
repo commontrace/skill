@@ -153,7 +153,15 @@ def configure_mcp(api_key: str) -> bool:
 
 
 def ensure_setup() -> str | None:
-    """Ensure API key exists and MCP is configured. Returns api_key or None."""
+    """Ensure API key exists and MCP is configured. Returns api_key or None.
+
+    Zero-decision onboarding (spec 2026-06-10 §10 Phase 1): installing the
+    plugin IS the opt-in, so the first run auto-provisions an anonymous
+    account (random ID, no PII) and queues a one-time disclosure notice
+    (pending_first_run_notice) that main() delivers and clears. A failed
+    provisioning attempt stores nothing, so every later session start
+    retries until it succeeds.
+    """
     config = load_config()
 
     # Check env var first (user override)
@@ -169,18 +177,13 @@ def ensure_setup() -> str | None:
     if api_key:
         return api_key
 
-    # M21: Check if user has explicitly opted in before auto-provisioning
-    if not config.get("consent_given"):
-        # First run — don't auto-provision without consent.
-        # User must set COMMONTRACE_API_KEY env var or run setup manually.
-        return None
-
-    # Provision with consent
+    # First run: auto-provision an anonymous account.
     api_key = provision_api_key()
     if not api_key:
         return None
 
     config["api_key"] = api_key
+    config["pending_first_run_notice"] = True
     save_config(config)
 
     # Configure MCP server for future sessions
