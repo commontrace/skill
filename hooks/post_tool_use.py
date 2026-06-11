@@ -340,7 +340,7 @@ def handle_bash(data: dict, state_dir: Path) -> dict | None:
                 "output_preview": redact_text(output[:200]) if output else "",
                 "errors_before": len(previous_errors),
             })
-            _pair_resolution(state_dir, command, previous_errors)
+            return _pair_resolution(state_dir, command, previous_errors)
 
     return None
 
@@ -438,7 +438,7 @@ def _command_head(command: str) -> str:
 
 
 def _pair_resolution(state_dir: Path, command: str,
-                     previous_errors: list[dict]) -> None:
+                     previous_errors: list[dict]) -> dict | None:
     """Pair a succeeding command with a prior error of the same command head.
 
     Structural signal: the command that failed now succeeds. Stores the fix
@@ -448,12 +448,14 @@ def _pair_resolution(state_dir: Path, command: str,
     If this signature's fix was injected earlier this session, the
     resolution is recorded as a consumed trigger (assisted resolution),
     which feeds the error_recurrence rate in the existing M22-gated
-    telemetry. Never raises.
+    telemetry. When a commons (non-"local:") trace contributed to the
+    fix, returns a Resolved-with disclosure suggestion for the agent.
+    Never raises.
     """
     try:
         head = _command_head(command)
         if not head:
-            return
+            return None
         match = None
         for entry in reversed(previous_errors):
             if entry.get("source") != "bash" or not entry.get("sig"):
@@ -462,10 +464,10 @@ def _pair_resolution(state_dir: Path, command: str,
                 match = entry
                 break
         if match is None:
-            return
+            return None
         project_id = _read_project_id(state_dir)
         if project_id is None:
-            return
+            return None
         err_t = match.get("t", 0)
 
         # Files changed between the error and this success = the fix.
@@ -506,9 +508,56 @@ def _pair_resolution(state_dir: Path, command: str,
         if match["sig"] in injected:
             record_trace_consumed(conn, state_dir.name,
                                   "local:" + error_hash(match["sig"]))
+
+        # Disclosure trailer: only for commons traces, never local markers
+        trailer_output = None
+        if trace_id and not str(trace_id).startswith("local:"):
+            trailer_output = _suggest_trailer(state_dir, trace_id)
         conn.close()
+        return trailer_output
     except Exception:
-        pass
+        return None
+
+
+def _suggest_trailer(state_dir: Path, trace_id: str) -> dict | None:
+    """Resolved-with disclosure trailer — citation, not co-authorship.
+
+    Fires once per (session, trace). Config gate: "resolved_with_trailer"
+    (default on). The one-line opt-out is surfaced exactly once ever, on
+    first use ("trailer_notice_shown" persisted to config).
+    """
+    try:
+        config = {}
+        if CONFIG_FILE.exists():
+            config = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        config = {}
+    if not config.get("resolved_with_trailer", True):
+        return None
+    suggested = {e.get("trace_id") for e in
+                 read_events(state_dir, "trailer_suggested.jsonl")}
+    if trace_id in suggested:
+        return None
+    append_event(state_dir, "trailer_suggested.jsonl", {"trace_id": trace_id})
+    parts = [
+        f"CommonTrace: trace {trace_id} contributed to this fix. "
+        f"If a commit comes out of it, the disclosure trailer is:\n"
+        f"Resolved-with: CommonTrace https://commontrace.org/t/{trace_id}\n"
+        f"(Citation, not co-authorship — add it at the end of the commit "
+        f"message if the user is fine with it.)"]
+    if not config.get("trailer_notice_shown"):
+        parts.append('One-line opt-out: set "resolved_with_trailer": false '
+                     "in ~/.commontrace/config.json.")
+        config["trailer_notice_shown"] = True
+        try:
+            CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            CONFIG_FILE.write_text(json.dumps(config, indent=2),
+                                   encoding="utf-8")
+            os.chmod(CONFIG_FILE, 0o600)
+        except OSError:
+            pass
+    return {"hookSpecificOutput": {"hookEventName": "PostToolUse",
+                                   "additionalContext": " ".join(parts)}}
 
 
 def _check_error_recurrence(sig: str, state_dir: Path) -> dict | None:
