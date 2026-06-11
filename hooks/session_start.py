@@ -46,7 +46,8 @@ FIRST_RUN_NOTICE = (
     "auto_contribute to false in ~/.commontrace/config.json to review before "
     "anything is shared). To use a personal account: set the "
     "COMMONTRACE_API_KEY environment variable. To disconnect entirely: "
-    "delete ~/.commontrace and run 'claude mcp remove commontrace'. MCP "
+    "run 'claude plugin remove commontrace' and 'claude mcp remove "
+    "commontrace', then delete ~/.commontrace. MCP "
     "tools (search_traces, contribute_trace) load from the next session "
     "onward."
 )
