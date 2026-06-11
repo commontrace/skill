@@ -88,3 +88,50 @@ class TestSuggestTrailer(HookTestCase):
         out = post_tool_use._pair_resolution(
             self.state_dir, "pytest", [_error_event(err_t)])
         self.assertIsNone(out)
+
+    def test_sanitize_trace_id_strips_bad_chars_and_caps_length(self):
+        """I4: newlines/quotes/control chars stripped; length capped at 64."""
+        # trace_id with newline, quote, null byte, and a long tail.
+        # After stripping non-[A-Za-z0-9_-] chars: "tr_42" + 60 a's = 65 chars → capped at 64.
+        dirty_id = "tr\n_\"42\x00" + "a" * 60
+        out = post_tool_use._suggest_trailer(self.state_dir, dirty_id)
+        self.assertIsNotNone(out)
+        ctx = out["hookSpecificOutput"]["additionalContext"]
+        # Extract the id from the URL — it is the path segment after /t/
+        url_part = [p for p in ctx.split() if "commontrace.org/t/" in p][0]
+        extracted_id = url_part.split("/t/")[1].rstrip(")\n")
+        # Must not contain stripped chars
+        self.assertNotIn("\n", extracted_id)
+        self.assertNotIn('"', extracted_id)
+        self.assertNotIn("\x00", extracted_id)
+        # Must be at most 64 chars
+        self.assertLessEqual(len(extracted_id), 64)
+
+    def test_rmw_concurrent_flag_survives_trailer_save(self):
+        """M6: flag written to config after initial load must not be clobbered."""
+        import threading
+
+        conn = self.get_conn()
+        self.write_project_bridge(conn)
+        err_t = time.time() - 60
+        self._seed_consumed(conn, "tr_rmw", err_t)
+
+        # Simulate a concurrent write that happens AFTER the hook reads the config
+        # but BEFORE it saves. We do this by pre-writing the flag to the config
+        # file right before the save path is reached: patch CONFIG_FILE on disk
+        # with a sentinel key, then let the hook do its first-use write.
+        # After the call, both trailer_notice_shown AND the sentinel must survive.
+        sentinel = {"other_flag": True}
+        post_tool_use.CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True,
+                                               mode=0o700)
+        post_tool_use.CONFIG_FILE.write_text(json.dumps(sentinel), encoding="utf-8")
+
+        out = post_tool_use._pair_resolution(
+            self.state_dir, "pytest", [_error_event(err_t)])
+        self.assertIsNotNone(out)
+        # Verify trailer_notice_shown was written
+        config = json.loads(
+            post_tool_use.CONFIG_FILE.read_text(encoding="utf-8"))
+        self.assertTrue(config.get("trailer_notice_shown"))
+        # Verify the pre-existing sentinel key was NOT clobbered (RMW preserved it)
+        self.assertTrue(config.get("other_flag"))

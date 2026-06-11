@@ -526,6 +526,12 @@ def _suggest_trailer(state_dir: Path, trace_id: str) -> dict | None:
     (default on). The one-line opt-out is surfaced exactly once ever, on
     first use ("trailer_notice_shown" persisted to config).
     """
+    # Sanitize trace_id at entry: only alphanumeric and hyphens, max 64 chars.
+    # Prevents newlines/quotes/control chars from corrupting hook-protocol JSON.
+    safe_id = re.sub(r"[^A-Za-z0-9_-]", "", str(trace_id))[:64]
+    if not safe_id:
+        return None
+
     try:
         config = {}
         if CONFIG_FILE.exists():
@@ -536,22 +542,34 @@ def _suggest_trailer(state_dir: Path, trace_id: str) -> dict | None:
         return None
     suggested = {e.get("trace_id") for e in
                  read_events(state_dir, "trailer_suggested.jsonl")}
-    if trace_id in suggested:
+    if safe_id in suggested:
         return None
-    append_event(state_dir, "trailer_suggested.jsonl", {"trace_id": trace_id})
+    append_event(state_dir, "trailer_suggested.jsonl", {"trace_id": safe_id})
     parts = [
-        f"CommonTrace: trace {trace_id} contributed to this fix. "
+        f"CommonTrace: trace {safe_id} contributed to this fix. "
         f"If a commit comes out of it, the disclosure trailer is:\n"
-        f"Resolved-with: CommonTrace https://commontrace.org/t/{trace_id}\n"
+        f"Resolved-with: CommonTrace https://commontrace.org/t/{safe_id}\n"
         f"(Citation, not co-authorship — add it at the end of the commit "
         f"message if the user is fine with it.)"]
     if not config.get("trailer_notice_shown"):
         parts.append('One-line opt-out: set "resolved_with_trailer": false '
                      "in ~/.commontrace/config.json.")
+        # Fresh-config RMW: re-read config file to avoid clobbering concurrent
+        # writes from other hook processes that ran between our initial load and
+        # this save. Apply mutation to the fresh dict; also update the
+        # in-memory dict so our caller stays consistent.
+        try:
+            fresh_config = {}
+            if CONFIG_FILE.exists():
+                fresh_config = json.loads(
+                    CONFIG_FILE.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            fresh_config = dict(config)
+        fresh_config["trailer_notice_shown"] = True
         config["trailer_notice_shown"] = True
         try:
             CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-            CONFIG_FILE.write_text(json.dumps(config, indent=2),
+            CONFIG_FILE.write_text(json.dumps(fresh_config, indent=2),
                                    encoding="utf-8")
             os.chmod(CONFIG_FILE, 0o600)
         except OSError:
