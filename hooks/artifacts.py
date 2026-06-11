@@ -26,6 +26,14 @@ TRACE_URL = "https://commontrace.org/t/{}"
 _TEMP_BOUNDS = [(7, "hot"), (30, "warm"), (90, "cool"), (180, "cold")]
 TEMP_COLORS = {"hot": "#e25822", "warm": "#e8a33d", "cool": "#4f86c6",
                "cold": "#7a8b99", "frozen": "#b9c4cc"}
+KNOWN_PATTERNS = frozenset({
+    "error_resolution", "security_hardening", "user_correction",
+    "approach_reversal", "test_fix_cycle", "dependency_resolution",
+    "config_discovery", "novelty_encounter", "infra_discovery",
+    "migration_pattern", "research_then_implement", "generation_effect",
+    "cross_file_breadth", "iteration_depth", "workaround",
+    "temporal_investment", "fail_then_succeed",
+})
 
 
 def temperature(last_seen_at, now=None):
@@ -345,8 +353,9 @@ def compiled_recap(conn, year, month):
             f"  hardest fight: one error took {solved['worst']} hits "
             f"before it fell")
     if top and top["top_pattern"]:
-        lines.append(
-            f"  signature move: {top['top_pattern'].replace('_', ' ')}")
+        label = (top["top_pattern"] if top["top_pattern"] in KNOWN_PATTERNS
+                 else "unknown")
+        lines.append(f"  signature move: {label.replace('_', ' ')}")
     if sess["contribs"]:
         lines.append(
             f"  {sess['contribs']} trace{'s' if sess['contribs'] != 1 else ''} "
@@ -360,6 +369,7 @@ def compiled_recap(conn, year, month):
 def write_artifact(name, content):
     """Write an artifact under ARTIFACTS_DIR with H9 perms (0700/0600)."""
     ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    ARTIFACTS_DIR.chmod(0o700)
     path = ARTIFACTS_DIR / name
     path.write_text(content, encoding="utf-8")
     try:
@@ -387,7 +397,18 @@ def main(argv):
             return 0
         if cmd == "recap":
             if len(argv) > 2:
-                year, month = (int(x) for x in argv[2].split("-"))
+                try:
+                    parts = argv[2].split("-")
+                    if len(parts) != 2:
+                        raise ValueError("wrong part count")
+                    year, month = int(parts[0]), int(parts[1])
+                    if not (1 <= month <= 12):
+                        raise ValueError("month out of range")
+                except ValueError:
+                    print(f"Invalid month argument: {argv[2]!r}. "
+                          f"Expected YYYY-MM (e.g. 2026-05).",
+                          file=sys.stderr)
+                    return 1
             else:
                 t = time.localtime()
                 year, month = ((t.tm_year, t.tm_mon - 1) if t.tm_mon > 1

@@ -243,6 +243,27 @@ class TestCompiledRecap(HookTestCase):
         self.assertNotIn("sig-a", text)
         self.assertNotIn("/test-project", text)
 
+    def test_unknown_pattern_renders_as_unknown(self):
+        conn = self.get_conn()
+        pid = local_store.ensure_project(conn, "/test-project")
+        start, _ = artifacts.month_range(2026, 5)
+        mid = start + 10 * DAY
+        conn.execute(
+            "INSERT INTO sessions (id, project_id, started_at, error_count, "
+            "resolution_count, contribution_count, top_pattern) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("sx", pid, mid, 1, 1, 0, "__injected__"))
+        conn.commit()
+        text = artifacts.compiled_recap(conn, 2026, 5)
+        self.assertIn("signature move: unknown", text)
+        self.assertNotIn("__injected__", text)
+
+    def test_known_pattern_passes_through(self):
+        conn = self.get_conn()
+        self._seed_month(conn)
+        text = artifacts.compiled_recap(conn, 2026, 5)
+        self.assertIn("signature move: error resolution", text)
+
 
 class TestWriteArtifactAndCLI(HookTestCase):
     def test_write_artifact_perms(self):
@@ -269,6 +290,18 @@ class TestWriteArtifactAndCLI(HookTestCase):
             rc = artifacts.main(["artifacts.py", "recap", "2026-04"])
         self.assertEqual(rc, 0)
         self.assertIn("No activity recorded for 2026-04", buf.getvalue())
+
+    def test_cli_recap_invalid_month_out_of_range(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = artifacts.main(["artifacts.py", "recap", "2026-13"])
+        self.assertEqual(rc, 1)
+
+    def test_cli_recap_invalid_month_bad_format(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = artifacts.main(["artifacts.py", "recap", "foo-bar"])
+        self.assertEqual(rc, 1)
 
     def test_cli_unknown_command(self):
         buf = io.StringIO()
