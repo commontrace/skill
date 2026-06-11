@@ -127,21 +127,25 @@ def maybe_ping(api_key: str) -> None:
 def configure_mcp(api_key: str) -> bool:
     """Run `claude mcp add` to register the MCP server with the API key.
 
-    H8: API key passed via environment variable, not CLI argument,
-    to avoid exposure in process listing (ps aux / /proc/pid/cmdline).
+    The raw key is embedded in the stored MCP config deliberately. This
+    function only runs right after auto-provisioning, when no
+    COMMONTRACE_API_KEY env var exists for `${...}` expansion at MCP
+    connect time — env-var indirection here would 401 on every MCP call.
+    Accepted tradeoff (supersedes H8 for this call site): the key is an
+    anonymous, low-value credential, and the argv exposure window is the
+    few seconds `claude mcp add` runs. Manual installs that export the
+    env var never reach this code path.
     """
     try:
-        env = os.environ.copy()
-        env["COMMONTRACE_API_KEY"] = api_key
         result = subprocess.run(
             [
                 "claude", "mcp", "add", "commontrace",
                 "--transport", "http",
                 MCP_URL,
-                "-H", "x-api-key: ${COMMONTRACE_API_KEY}",
+                "-H", f"x-api-key: {api_key}",
                 "-s", "user",
             ],
-            capture_output=True, text=True, timeout=10, env=env,
+            capture_output=True, text=True, timeout=10,
         )
         return result.returncode == 0
     except (OSError, subprocess.TimeoutExpired):
