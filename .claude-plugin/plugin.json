@@ -1,7 +1,7 @@
 {
   "name": "commontrace",
   "version": "0.5.2",
-  "description": "CommonTrace knowledge base integration for Claude Code agents. Auto-searches for relevant traces at session start, provides /trace:search and /trace:contribute commands.",
+  "description": "CommonTrace knowledge base integration for Claude Code agents. Auto-searches for relevant traces at session start, provides /trace:search, /trace:contribute and /trace:brain commands.",
   "author": {
     "name": "CommonTrace",
     "email": "support@commontrace.dev"
