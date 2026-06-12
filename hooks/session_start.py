@@ -13,6 +13,7 @@ Never blocks session start — failures degrade to a short notice or silence.
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -28,7 +29,7 @@ PENDING_DIR = CONFIG_DIR / "pending"
 PING_MARKER = CONFIG_DIR / "last_ping_date"
 API_BASE = "https://api.commontrace.org"
 MCP_URL = "https://mcp.commontrace.org/mcp"
-SKILL_VERSION = "0.5.1"
+SKILL_VERSION = "0.5.2"
 
 SETUP_FAILED_NOTICE = (
     "CommonTrace setup could not complete (API unreachable). The skill will "
@@ -508,6 +509,10 @@ def format_result(result: dict) -> str:
     context_text = result.get("context_text", "")[:100]
     solution_text = result.get("solution_text", "")[:150]
     trace_id = result.get("id", "")
+    # Contributor names are user-supplied — sanitize before display
+    contributor = re.sub(
+        r"[^\w\s.\-]", "",
+        str(result.get("contributor_name") or ""))[:40].strip()
 
     parts = [f"[{title}]"]
     if context_text:
@@ -516,6 +521,8 @@ def format_result(result: dict) -> str:
         parts.append(f"Solution: {solution_text}...")
     if trace_id:
         parts.append(f"(trace ID: {trace_id})")
+    if contributor:
+        parts.append(f"by {contributor}")
     return " ".join(parts)
 
 def _emit_setup_notice() -> None:

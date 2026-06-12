@@ -219,7 +219,11 @@ def format_results(results: list[dict]) -> str:
         title = r.get("title", "Untitled")
         solution = r.get("solution_text", "")[:200]
         trace_id = r.get("id", "")
-        lines.append(f"{i}. [{title}] — {solution}... (ID: {trace_id})")
+        # Contributor names are user-supplied — sanitize before display
+        contributor = re.sub(
+            r"[^\w\s.\-]", "", str(r.get("contributor_name") or ""))[:40].strip()
+        by = f" by {contributor}" if contributor else ""
+        lines.append(f"{i}. [{title}] — {solution}... (ID: {trace_id}{by})")
     return "\n".join(lines)
 
 

@@ -802,6 +802,48 @@ def _persist_session(data: dict, state_dir: Path) -> None:
         pass
 
 
+def _session_counters(conn, state_dir: Path, project_id) -> dict:
+    """Per-session aggregates for the assisted-resolution north-star (§4.3).
+
+    Scoped to THIS session: trigger_feedback rows keyed by state_dir.name,
+    resolution events from resolutions.jsonl, and assisted resolutions =
+    error signatures resolved with an attributed trace (commons ID or
+    local: marker — record_resolution COALESCEs both into trace_id) since
+    this session's first resolution event minus 5s grace. Capped at
+    resolutions_total so a recurring signature never overcounts.
+    """
+    counters = {"searches_fired": 0, "traces_consumed": 0,
+                "resolutions_total": 0, "resolutions_assisted": 0}
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) AS fired, "
+            "SUM(CASE WHEN trace_consumed_id IS NOT NULL THEN 1 ELSE 0 END) "
+            "AS consumed "
+            "FROM trigger_feedback WHERE session_id = ?",
+            (state_dir.name,)).fetchone()
+        if row:
+            counters["searches_fired"] = int(row["fired"] or 0)
+            counters["traces_consumed"] = int(row["consumed"] or 0)
+    except Exception:
+        pass
+    try:
+        resolutions = read_events(state_dir, "resolutions.jsonl")
+        counters["resolutions_total"] = len(resolutions)
+        if resolutions and project_id is not None:
+            floor = min(e.get("t", 0) for e in resolutions) - 5.0
+            row = conn.execute(
+                "SELECT COUNT(*) AS n FROM error_signatures "
+                "WHERE project_id = ? AND trace_id IS NOT NULL "
+                "AND resolved_at >= ?",
+                (project_id, floor)).fetchone()
+            if row:
+                counters["resolutions_assisted"] = min(
+                    int(row["n"] or 0), counters["resolutions_total"])
+    except Exception:
+        pass
+    return counters
+
+
 def _report_trigger_stats(data: dict, state_dir: Path) -> None:
     """Send anonymized trigger effectiveness stats to the API.
 
@@ -828,9 +870,10 @@ def _report_trigger_stats(data: dict, state_dir: Path) -> None:
 
         conn = _get_conn()
         stats = get_trigger_effectiveness(conn, project_id)
+        counters = _session_counters(conn, state_dir, project_id)
         conn.close()
 
-        if not stats:
+        if not stats and not any(counters.values()):
             return
 
         # Load API key
@@ -848,10 +891,9 @@ def _report_trigger_stats(data: dict, state_dir: Path) -> None:
             "COMMONTRACE_API_BASE_URL",
             "https://api.commontrace.org").rstrip("/")
 
-        payload = json.dumps({
-            "trigger_stats": stats,
-            "session_id": session_id,
-        }).encode("utf-8")
+        body = {"trigger_stats": stats, "session_id": session_id}
+        body.update(counters)
+        payload = json.dumps(body).encode("utf-8")
 
         req = urllib.request.Request(
             f"{base_url}/api/v1/telemetry/triggers",
