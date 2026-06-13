@@ -41,6 +41,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from session_state import get_state_dir, read_events, read_counter
+from redact import contains_harness_noise
 
 
 RESOLUTION_DIR = Path.home() / ".commontrace" / "resolutions"
@@ -128,6 +129,45 @@ def _auto_submit(payload: dict) -> str | None:
             return data.get("id")
     except (urllib.error.URLError, urllib.error.HTTPError, OSError, json.JSONDecodeError):
         return None
+
+
+def _looks_like_template(text: str) -> bool:
+    """True when text is the mechanical journey template, not real knowledge.
+
+    From thin journey data, _build_candidate can only synthesize two shapes
+    (see the suggested_*_text construction): "When working with X, encountered:
+    Y..." and "Resolution involved changing <basenames>." Both are scaffolding
+    meant to *seed* a human contribution — never a trace on their own. Empty
+    text counts as template (nothing to publish).
+    """
+    t = (text or "").strip().lower()
+    if not t:
+        return True
+    if t.startswith("when working with") and "encountered:" in t:
+        return True
+    if t.startswith("resolution involved changing"):
+        return True
+    return False
+
+
+def _is_husk(candidate: dict) -> bool:
+    """Quality floor for auto-submit: True = do NOT silently POST this.
+
+    A husk is a candidate carrying no real knowledge — empty, the bare journey
+    template, or tainted with agent-runtime noise (a leaked path). Husks route
+    to the manual-review pending file instead of the public wiki, where a human
+    writes real content or skips. Nothing is lost; the faucet just stops minting
+    template traces (the 49-husk root cause).
+    """
+    ctx = candidate.get("suggested_context_text") or ""
+    sol = candidate.get("suggested_solution_text") or ""
+    if contains_harness_noise(ctx) or contains_harness_noise(sol):
+        return True
+    if _looks_like_template(ctx):
+        return True
+    if _looks_like_template(sol):
+        return True
+    return False
 
 
 def _append_auto_log(entry: dict) -> None:
@@ -975,7 +1015,10 @@ def main() -> None:
     mark_prompted(session_key, "score")
     candidate = _build_candidate(score, top_pattern, top_evidence, state_dir)
 
-    if auto_mode:
+    # Husk guard: never silently publish empty / templated / noise-tainted
+    # candidates. Those route to the manual-review pending file below instead
+    # (the 49-husk root cause was auto_mode POSTing the bare journey template).
+    if auto_mode and not _is_husk(candidate):
         trace_id = _auto_submit(candidate)
         if trace_id:
             _append_auto_log({

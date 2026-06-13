@@ -31,7 +31,7 @@ from session_state import (
     get_state_dir, append_event, read_events, is_config_file,
     error_signature, error_hash,
 )
-from redact import redact_text, redact_command, is_sensitive_file
+from redact import redact_text, redact_command, is_sensitive_file, strip_harness_noise
 
 
 CONFIG_FILE = Path.home() / ".commontrace" / "config.json"
@@ -250,11 +250,11 @@ def detect_bash_error(data: dict) -> tuple[bool, str, str]:
         if exit_code is not None and exit_code != 0:
             # Use stderr if available, otherwise tail of output
             error_text = stderr if stderr else output[-500:]
-            return True, output, error_text
+            return True, output, strip_harness_noise(error_text)
 
         # Stderr with content = error (by Unix convention)
         if stderr and stderr.strip():
-            return True, output, stderr[-500:]
+            return True, output, strip_harness_noise(stderr[-500:])
 
         return False, output, ""
 
@@ -268,7 +268,7 @@ def detect_bash_error(data: dict) -> tuple[bool, str, str]:
         exit_match = re.search(r'exit\s*code[:\s]+(\d+)', output[-100:],
                                re.IGNORECASE)
         if exit_match and int(exit_match.group(1)) != 0:
-            return True, output, output[-500:]
+            return True, output, strip_harness_noise(output[-500:])
 
         return False, output, ""
 

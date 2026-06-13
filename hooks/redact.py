@@ -76,3 +76,39 @@ def redact_command(command: str) -> str:
     # Redact -p/--password arguments
     result = re.sub(r'(-p\s*|--password[= ])\S+', r'\1[REDACTED]', result)
     return result
+
+
+# Agent-runtime noise: strings the harness (Claude Code) appends to tool
+# output or injects into the transcript. They are NOT part of the user's
+# actual problem and must never enter a captured error, an error signature,
+# or a published trace — "Shell cwd was reset to /home/<user>/<project>" is
+# how absolute paths leaked into the public wiki.
+HARNESS_NOISE_MARKERS = (
+    "shell cwd was reset",
+    "cwd was reset to",
+    "<system-reminder>",
+    "</system-reminder>",
+    "commontrace found relevant traces",
+    "use get_trace with the id",
+)
+
+
+def contains_harness_noise(text: str) -> bool:
+    """True if text carries any agent-runtime noise marker (case-insensitive)."""
+    if not text:
+        return False
+    low = text.lower()
+    return any(marker in low for marker in HARNESS_NOISE_MARKERS)
+
+
+def strip_harness_noise(text: str) -> str:
+    """Drop lines carrying agent-runtime noise from captured output.
+
+    Applied to bash error capture before it is stored or signatured, so
+    harness notices never leak a path into local.db or a public trace.
+    Returns the surviving lines joined and trimmed (may be "" if all noise).
+    """
+    if not text:
+        return text
+    kept = [ln for ln in text.splitlines() if not contains_harness_noise(ln)]
+    return "\n".join(kept).strip()
