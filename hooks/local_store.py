@@ -1,6 +1,6 @@
 """Persistent local store for cross-session working memory.
 
-SQLite database at ~/.commontrace/local.db (5-table working memory cache).
+SQLite database at ~/.commontrace/local.db (6-table working memory cache).
 The remote PostgreSQL API is the source of truth. This store tracks only:
   - projects: identity and language/framework metadata
   - sessions: per-session stats and top pattern
@@ -20,7 +20,7 @@ from pathlib import Path
 
 DB_PATH = Path.home() / ".commontrace" / "local.db"
 
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -84,6 +84,21 @@ CREATE TABLE IF NOT EXISTS error_signatures (
     UNIQUE(project_id, signature)
 );
 CREATE INDEX IF NOT EXISTS idx_error_sig_project ON error_signatures(project_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS savings_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+    session_id TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    minutes_saved REAL DEFAULT 0,
+    tokens_saved INTEGER DEFAULT 0,
+    source_label TEXT,
+    trace_id TEXT,
+    signature TEXT NOT NULL DEFAULT '*session*',
+    created_at REAL NOT NULL,
+    UNIQUE(session_id, event_type, signature)
+);
+CREATE INDEX IF NOT EXISTS idx_savings_created ON savings_events(project_id, created_at DESC);
 """
 
 
@@ -96,6 +111,8 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
         _migrate_to_v2(conn)
     if version < 3:
         _migrate_to_v3(conn)
+    if version < 4:
+        _migrate_to_v4(conn)
     conn.execute(f"PRAGMA user_version = {CURRENT_SCHEMA_VERSION}")
     conn.commit()
 
@@ -211,6 +228,31 @@ def _migrate_to_v3(conn: sqlite3.Connection) -> None:
             ALTER TABLE error_signatures_v3 RENAME TO error_signatures;
             COMMIT;
         """)
+
+
+def _migrate_to_v4(conn: sqlite3.Connection) -> None:
+    """Migrate v3 -> v4: add the savings_events ledger. Additive only.
+
+    No table rebuild — just create the new table + index if absent. Existing
+    rows in every other table are untouched.
+    """
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS savings_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+            session_id TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            minutes_saved REAL DEFAULT 0,
+            tokens_saved INTEGER DEFAULT 0,
+            source_label TEXT,
+            trace_id TEXT,
+            signature TEXT NOT NULL DEFAULT '*session*',
+            created_at REAL NOT NULL,
+            UNIQUE(session_id, event_type, signature)
+        );
+        CREATE INDEX IF NOT EXISTS idx_savings_created
+            ON savings_events(project_id, created_at DESC);
+    """)
 
 
 def _get_conn() -> sqlite3.Connection:
@@ -526,6 +568,7 @@ def prune_stale_cache(conn: sqlite3.Connection) -> None:
     - trace_cache (downvoted): 7 days after last seen
     - trigger_feedback: 60 days
     - error_signatures: 90 days unresolved, 180 days resolved (a stored fix is the product — keep it longer)
+    - savings_events: 90 days
     """
     now = time.time()
     conn.execute(
@@ -553,6 +596,10 @@ def prune_stale_cache(conn: sqlite3.Connection) -> None:
         "DELETE FROM error_signatures "
         "WHERE resolved_at IS NOT NULL AND last_seen_at < ?",
         (now - 180 * 86400,),
+    )
+    conn.execute(
+        "DELETE FROM savings_events WHERE created_at < ?",
+        (now - 90 * 86400,),
     )
     conn.commit()
     conn.execute("PRAGMA wal_checkpoint(PASSIVE)")

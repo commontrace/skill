@@ -73,7 +73,7 @@ class TestV3Migration(HookTestCase):
             [(r["signature"], r["seen_count"]) for r in rows],
             [("sig-a", 3), ("sig-b", 1)])
         self.assertEqual(
-            conn.execute("PRAGMA user_version").fetchone()[0], 3)
+            conn.execute("PRAGMA user_version").fetchone()[0], 4)
 
     def test_fresh_db_has_v3_columns(self):
         conn = self.get_conn()
