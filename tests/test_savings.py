@@ -107,15 +107,15 @@ class TestMoney(unittest.TestCase):
 
 class TestHm(unittest.TestCase):
     def test_minutes_under_an_hour(self):
-        self.assertEqual(savings._hm(2), "~2m")
-        self.assertEqual(savings._hm(2.4), "~2m")
-        self.assertEqual(savings._hm(59), "~59m")
+        self.assertEqual(savings.fmt_duration(2), "~2m")
+        self.assertEqual(savings.fmt_duration(2.4), "~2m")
+        self.assertEqual(savings.fmt_duration(59), "~59m")
 
     def test_exactly_one_hour_drops_trailing_zero(self):
-        self.assertEqual(savings._hm(60), "~1h")
+        self.assertEqual(savings.fmt_duration(60), "~1h")
 
     def test_ninety_minutes_is_one_point_five_hours(self):
-        self.assertEqual(savings._hm(90), "~1.5h")
+        self.assertEqual(savings.fmt_duration(90), "~1.5h")
 
 class TestRecapLine(unittest.TestCase):
     def test_delta_and_lifetime(self):

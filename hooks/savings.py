@@ -70,7 +70,7 @@ def money_usd(tokens: int, price_per_mtok: float = None) -> float:
     price = price_per_mtok if price_per_mtok is not None else DEFAULT_PRICE_PER_MTOK
     return round(tokens / 1_000_000 * price, 2)
 
-def _hm(minutes: float) -> str:
+def fmt_duration(minutes: float) -> str:
     """Compact duration: '~Xm' under an hour, '~Yh' (no trailing .0) above."""
     if minutes >= 60:
         hours = round(minutes / 60, 1)
@@ -91,12 +91,12 @@ def format_recap_line(life: dict, delta: dict = None,
     parts = []
     if delta and (delta.get("minutes", 0) > 0 or delta.get("tokens", 0) > 0):
         parts.append(
-            "saved you " + _hm(delta.get("minutes", 0)) + " ~$"
+            "saved you " + fmt_duration(delta.get("minutes", 0)) + " ~$"
             + str(money_usd(delta.get("tokens", 0), price_per_mtok))
             + " since last session")
     if life.get("minutes", 0) > 0 or life.get("tokens", 0) > 0:
         parts.append(
-            "lifetime " + _hm(life.get("minutes", 0)) + "/~$"
+            "lifetime " + fmt_duration(life.get("minutes", 0)) + "/~$"
             + str(money_usd(life.get("tokens", 0), price_per_mtok)))
     if not parts:
         return ""
