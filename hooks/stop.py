@@ -596,7 +596,7 @@ def _read_context_fingerprint(state_dir: Path) -> dict | None:
 
 
 def _build_candidate(score: float, top_pattern: str, evidence: dict,
-                     state_dir: Path) -> dict:
+                     state_dir: Path, transcript_path: str = "") -> dict:
     """Build a structured candidate payload + human prompt from detection state.
 
     Returns dict with: score, top_pattern, evidence, metadata_json,
@@ -713,6 +713,18 @@ def _build_candidate(score: float, top_pattern: str, evidence: dict,
         file_counts[f] = file_counts.get(f, 0) + 1
     max_iterations = max(file_counts.values()) if file_counts else 0
 
+    # Measured token cost of the resolution window (rides with the trace).
+    # No LLM — a real sum of message.usage over the first-error->resolved span.
+    from savings import sum_usage, TOKENS_PER_TURN_EST
+    if timestamps:
+        tokens_to_resolution = sum_usage(
+            transcript_path, min(timestamps), max(timestamps))
+    else:
+        tokens_to_resolution = 0
+    if tokens_to_resolution <= 0:
+        # Conservative legacy floor when the window has no measurable usage.
+        tokens_to_resolution = (len(errors) + max_iterations) * TOKENS_PER_TURN_EST
+
     # Include user emphasis score if detected
     emphasis_events = read_events(state_dir, "emphasis.jsonl")
     peak_emphasis = 0.0
@@ -734,6 +746,7 @@ def _build_candidate(score: float, top_pattern: str, evidence: dict,
         f'"time_to_resolution_minutes": {duration_min}',
         f'"iteration_count": {max_iterations}',
         f'"user_emphasis": {peak_emphasis}',
+        f'"tokens_to_resolution": {tokens_to_resolution}',
     ]
     if first_error_tail:
         escaped_error = first_error_tail.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
@@ -795,6 +808,7 @@ def _build_candidate(score: float, top_pattern: str, evidence: dict,
         "time_to_resolution_minutes": duration_min,
         "iteration_count": max_iterations,
         "user_emphasis": peak_emphasis,
+        "tokens_to_resolution": tokens_to_resolution,
     }
     if first_error_tail:
         metadata_json["error_message"] = first_error_tail
@@ -1013,7 +1027,7 @@ def main() -> None:
         return
 
     mark_prompted(session_key, "score")
-    candidate = _build_candidate(score, top_pattern, top_evidence, state_dir)
+    candidate = _build_candidate(score, top_pattern, top_evidence, state_dir, transcript_path=data.get("transcript_path", ""))
 
     # Husk guard: never silently publish empty / templated / noise-tainted
     # candidates. Those route to the manual-review pending file below instead

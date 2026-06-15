@@ -5,6 +5,7 @@ a real v3 database file, then opens it through _get_conn() and asserts the
 additive migration ran (savings_events present, user_version == 4).
 """
 
+import json
 import sqlite3
 import time
 import unittest
@@ -244,6 +245,55 @@ class TestLedgerHelpers(HookTestCase):
         pid = local_store.ensure_project(conn, "/p")
         with self.assertRaises(ValueError):
             local_store.book_session_saving(conn, pid, "sess-neg", 5.0, -1)
+
+
+class TestTokensInMetadata(HookTestCase):
+    def setUp(self):
+        super().setUp()
+        import stop  # local import: base.py has already inserted hooks/ on path
+        self.stop = stop
+
+    def _transcript(self, lines):
+        path = self.tmp_path / "t.jsonl"
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return str(path)
+
+    def test_measured_tokens_in_metadata_json(self):
+        t0 = 1_750_000_000.0
+        from datetime import datetime, timezone
+        iso0 = datetime.fromtimestamp(t0, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        iso1 = datetime.fromtimestamp(t0 + 120, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        append_event(self.state_dir, "errors.jsonl", {"t": t0})
+        append_event(self.state_dir, "changes.jsonl", {"t": t0 + 120, "file": "app.py"})
+        transcript = self._transcript([
+            json.dumps({"timestamp": iso0, "message": {"usage": {"input_tokens": 400, "output_tokens": 100}}}),
+            json.dumps({"timestamp": iso1, "message": {"usage": {"input_tokens": 200, "output_tokens": 50}}}),
+        ])
+        cand = self.stop._build_candidate(
+            5.0, "error_resolution", {"errors": 1, "changes": 1},
+            self.state_dir, transcript_path=transcript)
+        self.assertEqual(cand["metadata_json"]["tokens_to_resolution"], 750)
+        self.assertIn('"tokens_to_resolution": 750', cand["human_prompt"])
+
+    def test_fallback_estimate_when_no_transcript(self):
+        t0 = 1_750_000_000.0
+        append_event(self.state_dir, "errors.jsonl", {"t": t0})
+        append_event(self.state_dir, "errors.jsonl", {"t": t0 + 30})
+        append_event(self.state_dir, "changes.jsonl", {"t": t0 + 60, "file": "app.py"})
+        cand = self.stop._build_candidate(
+            5.0, "error_resolution", {"errors": 2, "changes": 1},
+            self.state_dir, transcript_path="")
+        # (error_count 2 + iteration_count 1) * TOKENS_PER_TURN_EST(1500) = 4500
+        self.assertEqual(cand["metadata_json"]["tokens_to_resolution"], 4500)
+
+    def test_default_transcript_path_arg_is_optional(self):
+        t0 = 1_750_000_000.0
+        append_event(self.state_dir, "errors.jsonl", {"t": t0})
+        append_event(self.state_dir, "changes.jsonl", {"t": t0 + 10, "file": "x.py"})
+        cand = self.stop._build_candidate(
+            5.0, "error_resolution", {"errors": 1, "changes": 1},
+            self.state_dir)
+        self.assertIn("tokens_to_resolution", cand["metadata_json"])
 
 
 if __name__ == "__main__":
