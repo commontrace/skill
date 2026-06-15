@@ -296,5 +296,94 @@ class TestTokensInMetadata(HookTestCase):
         self.assertIn("tokens_to_resolution", cand["metadata_json"])
 
 
+class TestBookSavings(HookTestCase):
+    def setUp(self):
+        super().setUp()
+        import stop
+        self.stop = stop
+
+    def _seed_resolved_signature(self, conn, pid, created, resolved,
+                                 trace_id="t-1", signature="sig-a"):
+        conn.execute(
+            "INSERT INTO error_signatures (project_id, signature, created_at, "
+            "last_seen_at, seen_count, resolved_at, trace_id) "
+            "VALUES (?, ?, ?, ?, 1, ?, ?)",
+            (pid, signature, created, resolved, resolved, trace_id))
+        conn.commit()
+
+    def test_books_row_for_resolved_trace_linked_signature(self):
+        conn = self.get_conn()
+        pid = self.write_project_bridge(conn)
+        t0 = time.time()
+        self._seed_resolved_signature(conn, pid, t0 - 360, t0)
+        conn.close()
+        append_event(self.state_dir, "errors.jsonl", {"t": t0 - 360})
+        append_event(self.state_dir, "resolutions.jsonl", {"t": t0})
+        data = {"session_id": "sess-book", "transcript_path": ""}
+        self.stop._book_savings(data, self.state_dir)
+        conn2 = local_store._get_conn()
+        self.addCleanup(conn2.close)
+        row = conn2.execute(
+            "SELECT minutes_saved, event_type, source_label "
+            "FROM savings_events").fetchone()
+        self.assertIsNotNone(row)
+        self.assertAlmostEqual(row["minutes_saved"], 6.0)
+        self.assertEqual(row["event_type"], "measured_recurrence")
+
+    def test_minutes_capped_at_120_per_event(self):
+        conn = self.get_conn()
+        pid = self.write_project_bridge(conn)
+        t0 = time.time()
+        self._seed_resolved_signature(conn, pid, t0 - 36000, t0)
+        conn.close()
+        append_event(self.state_dir, "errors.jsonl", {"t": t0 - 36000})
+        append_event(self.state_dir, "resolutions.jsonl", {"t": t0})
+        self.stop._book_savings(
+            {"session_id": "sess-cap", "transcript_path": ""}, self.state_dir)
+        conn2 = local_store._get_conn()
+        self.addCleanup(conn2.close)
+        m = conn2.execute(
+            "SELECT minutes_saved FROM savings_events").fetchone()["minutes_saved"]
+        self.assertAlmostEqual(m, 120.0)
+
+    def test_no_row_when_no_trace_linked_resolution(self):
+        conn = self.get_conn()
+        pid = self.write_project_bridge(conn)
+        t0 = time.time()
+        conn.execute(
+            "INSERT INTO error_signatures (project_id, signature, created_at, "
+            "last_seen_at, seen_count, resolved_at, trace_id) "
+            "VALUES (?, 'sig-x', ?, ?, 1, ?, NULL)",
+            (pid, t0 - 100, t0, t0))
+        conn.commit()
+        conn.close()
+        append_event(self.state_dir, "resolutions.jsonl", {"t": t0})
+        self.stop._book_savings(
+            {"session_id": "sess-none", "transcript_path": ""}, self.state_dir)
+        conn2 = local_store._get_conn()
+        self.addCleanup(conn2.close)
+        n = conn2.execute("SELECT COUNT(*) FROM savings_events").fetchone()[0]
+        self.assertEqual(n, 0)
+
+    def test_no_row_when_no_session_timestamps(self):
+        conn = self.get_conn()
+        pid = self.write_project_bridge(conn)
+        t0 = time.time()
+        self._seed_resolved_signature(conn, pid, t0 - 360, t0)
+        conn.close()
+        self.stop._book_savings(
+            {"session_id": "sess-empty", "transcript_path": ""}, self.state_dir)
+        conn2 = local_store._get_conn()
+        self.addCleanup(conn2.close)
+        n = conn2.execute("SELECT COUNT(*) FROM savings_events").fetchone()[0]
+        self.assertEqual(n, 0)
+
+    def test_corrupt_state_does_not_raise(self):
+        try:
+            self.stop._book_savings({"session_id": "x"}, self.state_dir)
+        except Exception as exc:  # pragma: no cover
+            self.fail(f"_book_savings raised: {exc!r}")
+
+
 if __name__ == "__main__":
     unittest.main()
