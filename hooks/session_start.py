@@ -595,7 +595,9 @@ def main() -> None:
     context_dict = None
     session_id = data.get("session_id") or f"unknown-{uuid.uuid4().hex[:12]}"
     contribution_recall = ""
+    savings_recap = ""
     try:
+        import local_store
         from local_store import (
             _get_conn, ensure_project, start_session, get_project_context,
             get_cached_traces, get_trigger_effectiveness,
@@ -619,6 +621,18 @@ def main() -> None:
             contribution_recall = (
                 f"Previously useful traces: {'; '.join(titles)}. "
             )
+
+        # Savings recap (inbound only) — built while conn is open. Opt-out via
+        # config "savings_recap" (default on). No LLM: measured tokens x price.
+        cfg = load_config()
+        if cfg.get("savings_recap", True):
+            from savings import format_recap_line
+            life = local_store.savings_totals(conn)
+            prev = local_store.prev_session_started_at(conn, session_id)
+            delta = (local_store.savings_totals(conn, since=prev)
+                     if prev else None)
+            savings_recap = format_recap_line(
+                life, delta, price_per_mtok=cfg.get("price_per_mtok"))
 
         # Write bridge files for Layer 1 hooks
         from session_state import get_state_dir
@@ -701,6 +715,10 @@ def main() -> None:
             additional_context += f"\n\n{recap_note}"
     except Exception:
         pass
+
+    # Append the savings recap line last (quiet, single line, opt-outable).
+    if savings_recap:
+        additional_context += "\n\n" + savings_recap
 
     output = {
         "hookSpecificOutput": {

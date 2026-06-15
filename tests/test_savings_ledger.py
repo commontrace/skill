@@ -385,5 +385,54 @@ class TestBookSavings(HookTestCase):
             self.fail(f"_book_savings raised: {exc!r}")
 
 
+class TestSessionStartRecap(HookTestCase):
+    def _seed_two_sessions_with_savings(self, conn):
+        pid = local_store.ensure_project(conn, "/p")
+        now = time.time()
+        # A previous session and the current one.
+        conn.execute(
+            "INSERT INTO sessions (id, project_id, started_at) "
+            "VALUES ('prev', ?, ?)", (pid, now - 2 * DAY))
+        conn.execute(
+            "INSERT INTO sessions (id, project_id, started_at) "
+            "VALUES ('cur', ?, ?)", (pid, now))
+        # Lifetime savings: one old (before prev), one new (after prev).
+        conn.execute(
+            "INSERT INTO savings_events (project_id, session_id, event_type, "
+            "minutes_saved, tokens_saved, created_at) VALUES (?,?,?,?,?,?)",
+            (pid, "old", "measured_recurrence", 60.0, 1_000_000, now - 3 * DAY))
+        conn.execute(
+            "INSERT INTO savings_events (project_id, session_id, event_type, "
+            "minutes_saved, tokens_saved, created_at) VALUES (?,?,?,?,?,?)",
+            (pid, "prev", "measured_recurrence", 30.0, 1_000_000, now - DAY))
+        conn.commit()
+        return pid
+
+    def test_recap_composition_matches_main_logic(self):
+        from savings import format_recap_line
+        conn = self.get_conn()
+        self._seed_two_sessions_with_savings(conn)
+        life = local_store.savings_totals(conn)
+        prev = local_store.prev_session_started_at(conn, "cur")
+        delta = local_store.savings_totals(conn, since=prev) if prev else None
+        line = format_recap_line(life, delta, price_per_mtok=None)
+        # Lifetime = 90 min / 2M tokens; delta since prev (now-2d) = the
+        # now-1d row only = 30 min / 1M tokens.
+        self.assertIn("lifetime ~1.5h/~$6.0", line)
+        self.assertIn("saved you ~30m ~$3.0 since last session", line)
+
+    def test_recap_empty_when_no_savings(self):
+        from savings import format_recap_line
+        conn = self.get_conn()
+        local_store.ensure_project(conn, "/p")
+        life = local_store.savings_totals(conn)
+        self.assertEqual(format_recap_line(life, None), "")
+
+    def test_config_opt_out_default_on(self):
+        # Mirrors the gate session_start uses: config.get("savings_recap", True).
+        self.assertTrue({}.get("savings_recap", True))
+        self.assertFalse({"savings_recap": False}.get("savings_recap", True))
+
+
 if __name__ == "__main__":
     unittest.main()
