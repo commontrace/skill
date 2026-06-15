@@ -127,5 +127,124 @@ class TestSavingsPrune(HookTestCase):
             conn.execute("SELECT COUNT(*) FROM savings_events").fetchone()[0], 0)
 
 
+class TestLedgerHelpers(HookTestCase):
+    def test_book_inserts_a_row(self):
+        conn = self.get_conn()
+        pid = local_store.ensure_project(conn, "/p")
+        ok = local_store.book_session_saving(
+            conn, pid, "sess-1", minutes=12.5, tokens=300_000)
+        self.assertTrue(ok)
+        row = conn.execute(
+            "SELECT minutes_saved, tokens_saved, event_type, source_label, "
+            "signature FROM savings_events").fetchone()
+        self.assertAlmostEqual(row["minutes_saved"], 12.5)
+        self.assertEqual(row["tokens_saved"], 300_000)
+        self.assertEqual(row["event_type"], "measured_recurrence")
+        self.assertEqual(row["source_label"], "measured")
+        self.assertEqual(row["signature"], "*session*")
+
+    def test_book_is_noop_on_zero_zero(self):
+        conn = self.get_conn()
+        pid = local_store.ensure_project(conn, "/p")
+        self.assertFalse(
+            local_store.book_session_saving(conn, pid, "sess-1", 0, 0))
+        n = conn.execute("SELECT COUNT(*) FROM savings_events").fetchone()[0]
+        self.assertEqual(n, 0)
+
+    def test_book_books_when_only_minutes_positive(self):
+        conn = self.get_conn()
+        pid = local_store.ensure_project(conn, "/p")
+        self.assertTrue(
+            local_store.book_session_saving(conn, pid, "sess-1", 5.0, 0))
+
+    def test_book_dedups_same_session_event_signature(self):
+        conn = self.get_conn()
+        pid = local_store.ensure_project(conn, "/p")
+        self.assertTrue(
+            local_store.book_session_saving(conn, pid, "sess-1", 10, 100))
+        # Same (session, event_type, default signature) -> INSERT OR IGNORE drops it.
+        self.assertFalse(
+            local_store.book_session_saving(conn, pid, "sess-1", 99, 999))
+        n = conn.execute("SELECT COUNT(*) FROM savings_events").fetchone()[0]
+        self.assertEqual(n, 1)
+
+    def test_book_different_session_counts_again(self):
+        conn = self.get_conn()
+        pid = local_store.ensure_project(conn, "/p")
+        local_store.book_session_saving(conn, pid, "sess-1", 10, 100)
+        self.assertTrue(
+            local_store.book_session_saving(conn, pid, "sess-2", 10, 100))
+        n = conn.execute("SELECT COUNT(*) FROM savings_events").fetchone()[0]
+        self.assertEqual(n, 2)
+
+    def test_savings_totals_sums_all(self):
+        conn = self.get_conn()
+        pid = local_store.ensure_project(conn, "/p")
+        local_store.book_session_saving(conn, pid, "s1", 10.0, 100_000)
+        local_store.book_session_saving(conn, pid, "s2", 20.0, 200_000)
+        totals = local_store.savings_totals(conn)
+        self.assertAlmostEqual(totals["minutes"], 30.0)
+        self.assertEqual(totals["tokens"], 300_000)
+        self.assertEqual(totals["events"], 2)
+
+    def test_savings_totals_empty_is_zeroed(self):
+        conn = self.get_conn()
+        totals = local_store.savings_totals(conn)
+        self.assertEqual(totals, {"minutes": 0.0, "tokens": 0, "events": 0})
+
+    def test_savings_totals_since_filters_by_created_at(self):
+        conn = self.get_conn()
+        pid = local_store.ensure_project(conn, "/p")
+        now = time.time()
+        conn.execute(
+            "INSERT INTO savings_events (project_id, session_id, event_type, "
+            "minutes_saved, tokens_saved, created_at) VALUES (?,?,?,?,?,?)",
+            (pid, "old", "measured_recurrence", 5.0, 50, now - 10 * DAY))
+        conn.execute(
+            "INSERT INTO savings_events (project_id, session_id, event_type, "
+            "minutes_saved, tokens_saved, created_at) VALUES (?,?,?,?,?,?)",
+            (pid, "new", "measured_recurrence", 7.0, 70, now - 1 * DAY))
+        conn.commit()
+        totals = local_store.savings_totals(conn, since=now - 5 * DAY)
+        self.assertAlmostEqual(totals["minutes"], 7.0)
+        self.assertEqual(totals["tokens"], 70)
+        self.assertEqual(totals["events"], 1)
+
+    def test_prev_session_started_at_picks_most_recent_other(self):
+        conn = self.get_conn()
+        pid = local_store.ensure_project(conn, "/p")
+        now = time.time()
+        for sid, started in [("a", now - 3 * DAY), ("b", now - 1 * DAY),
+                              ("current", now)]:
+            conn.execute(
+                "INSERT INTO sessions (id, project_id, started_at) "
+                "VALUES (?, ?, ?)", (sid, pid, started))
+        conn.commit()
+        prev = local_store.prev_session_started_at(conn, "current")
+        self.assertAlmostEqual(prev, now - 1 * DAY)
+
+    def test_prev_session_started_at_none_when_alone(self):
+        conn = self.get_conn()
+        pid = local_store.ensure_project(conn, "/p")
+        conn.execute(
+            "INSERT INTO sessions (id, project_id, started_at) "
+            "VALUES ('only', ?, ?)", (pid, time.time()))
+        conn.commit()
+        self.assertIsNone(
+            local_store.prev_session_started_at(conn, "only"))
+
+    def test_book_raises_on_negative_minutes(self):
+        conn = self.get_conn()
+        pid = local_store.ensure_project(conn, "/p")
+        with self.assertRaises(ValueError):
+            local_store.book_session_saving(conn, pid, "sess-neg", -1.0, 100)
+
+    def test_book_raises_on_negative_tokens(self):
+        conn = self.get_conn()
+        pid = local_store.ensure_project(conn, "/p")
+        with self.assertRaises(ValueError):
+            local_store.book_session_saving(conn, pid, "sess-neg", 5.0, -1)
+
+
 if __name__ == "__main__":
     unittest.main()

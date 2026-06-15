@@ -444,6 +444,71 @@ def record_resolution(conn: sqlite3.Connection, project_id: int,
 
 
 # ---------------------------------------------------------------------------
+# Savings ledger (inbound — what the commons saved you)
+# ---------------------------------------------------------------------------
+
+def book_session_saving(conn: sqlite3.Connection, project_id: int,
+                        session_id: str, minutes: float, tokens: int,
+                        event_type: str = "measured_recurrence",
+                        source_label: str = "measured",
+                        trace_id: str = None) -> bool:
+    """Book one inbound saving for this session. Guarded + idempotent.
+
+    Returns False (and writes nothing) when both minutes and tokens are
+    non-positive. The signature column defaults to '*session*' so the
+    UNIQUE(session_id, event_type, signature) constraint enforces one
+    booking per (session, event_type) — INSERT OR IGNORE drops a repeat.
+    Returns True only when a new row was actually inserted.
+    """
+    if minutes < 0 or tokens < 0:
+        raise ValueError(
+            f'savings values must be non-negative: minutes={minutes}, tokens={tokens}')
+    if minutes <= 0 and tokens <= 0:
+        return False
+    cur = conn.execute(
+        "INSERT OR IGNORE INTO savings_events "
+        "(project_id, session_id, event_type, minutes_saved, tokens_saved, "
+        "source_label, trace_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (project_id, session_id, event_type, minutes, tokens,
+         source_label, trace_id, time.time()),
+    )
+    return cur.rowcount > 0
+
+def savings_totals(conn: sqlite3.Connection, since: float = None) -> dict:
+    """Roll up the savings ledger.
+
+    Returns {"minutes": float, "tokens": int, "events": int}. When `since`
+    is given, only rows with created_at >= since are counted.
+    """
+    if since is None:
+        row = conn.execute(
+            "SELECT COALESCE(SUM(minutes_saved), 0), "
+            "COALESCE(SUM(tokens_saved), 0), COUNT(*) FROM savings_events"
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT COALESCE(SUM(minutes_saved), 0), "
+            "COALESCE(SUM(tokens_saved), 0), COUNT(*) FROM savings_events "
+            "WHERE created_at >= ?", (since,)
+        ).fetchone()
+    return {"minutes": float(row[0]), "tokens": int(row[1]),
+            "events": int(row[2])}
+
+def prev_session_started_at(conn: sqlite3.Connection,
+                            current_session_id: str) -> float | None:
+    """Started-at of the most recent session OTHER than the current one.
+
+    Used as the lower bound for the 'since last session' delta. Returns None
+    when no other session exists.
+    """
+    row = conn.execute(
+        "SELECT MAX(started_at) FROM sessions WHERE id != ?",
+        (current_session_id,),
+    ).fetchone()
+    return row[0] if row and row[0] is not None else None
+
+
+# ---------------------------------------------------------------------------
 # Trigger feedback
 # ---------------------------------------------------------------------------
 
