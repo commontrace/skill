@@ -418,8 +418,8 @@ class TestSessionStartRecap(HookTestCase):
         line = format_recap_line(life, delta, price_per_mtok=None)
         # Lifetime = 90 min / 2M tokens; delta since prev (now-2d) = the
         # now-1d row only = 30 min / 1M tokens.
-        self.assertIn("lifetime ~1.5h/~$6.0", line)
-        self.assertIn("saved you ~30m ~$3.0 since last session", line)
+        self.assertIn("lifetime ~1.5h/~$10.0", line)
+        self.assertIn("saved you ~30m ~$5.0 since last session", line)
 
     def test_recap_empty_when_no_savings(self):
         from savings import format_recap_line

@@ -87,23 +87,23 @@ class TestSumUsage(HookTestCase):
         self.assertEqual(savings.sum_usage(str(path), start, end), 30)
 
 class TestMoney(unittest.TestCase):
-    def test_default_price_is_three(self):
-        self.assertEqual(savings.DEFAULT_PRICE_PER_MTOK, 3.0)
+    def test_default_price_is_five(self):
+        self.assertEqual(savings.DEFAULT_PRICE_PER_MTOK, 5.0)
 
     def test_one_million_tokens_at_default(self):
-        self.assertEqual(savings.money_usd(1_000_000), 3.0)
+        self.assertEqual(savings.money_usd(1_000_000), 5.0)
 
     def test_half_million_tokens(self):
-        self.assertEqual(savings.money_usd(500_000), 1.5)
+        self.assertEqual(savings.money_usd(500_000), 2.5)
 
     def test_zero_tokens(self):
         self.assertEqual(savings.money_usd(0), 0.0)
 
     def test_price_override(self):
-        self.assertEqual(savings.money_usd(1_000_000, price_per_mtok=5.0), 5.0)
+        self.assertEqual(savings.money_usd(1_000_000, price_per_mtok=7.0), 7.0)
 
     def test_rounds_to_cents(self):
-        self.assertEqual(savings.money_usd(333_333), 1.0)
+        self.assertEqual(savings.money_usd(333_333), 1.67)
 
 class TestHm(unittest.TestCase):
     def test_minutes_under_an_hour(self):
@@ -123,15 +123,15 @@ class TestRecapLine(unittest.TestCase):
         delta = {"minutes": 30.0, "tokens": 1_000_000}
         line = savings.format_recap_line(life, delta)
         self.assertTrue(line.startswith("CommonTrace: "))
-        self.assertIn("saved you ~30m ~$3.0 since last session", line)
-        self.assertIn("lifetime ~9h/~$12.0", line)
+        self.assertIn("saved you ~30m ~$5.0 since last session", line)
+        self.assertIn("lifetime ~9h/~$20.0", line)
         self.assertIn(" · ", line)
         self.assertNotIn("saved others", line)
 
     def test_lifetime_only_when_no_delta(self):
         life = {"minutes": 120.0, "tokens": 2_000_000, "events": 3}
         line = savings.format_recap_line(life, None)
-        self.assertEqual(line, "CommonTrace: lifetime ~2h/~$6.0")
+        self.assertEqual(line, "CommonTrace: lifetime ~2h/~$10.0")
 
     def test_empty_returns_empty_string(self):
         life = {"minutes": 0.0, "tokens": 0, "events": 0}
@@ -141,7 +141,7 @@ class TestRecapLine(unittest.TestCase):
         life = {"minutes": 120.0, "tokens": 2_000_000, "events": 3}
         delta = {"minutes": 0.0, "tokens": 0}
         line = savings.format_recap_line(life, delta)
-        self.assertEqual(line, "CommonTrace: lifetime ~2h/~$6.0")
+        self.assertEqual(line, "CommonTrace: lifetime ~2h/~$10.0")
 
     def test_price_override_flows_into_money(self):
         life = {"minutes": 60.0, "tokens": 1_000_000, "events": 1}

@@ -332,7 +332,7 @@ class TestCompiledRecapSavings(HookTestCase):
             (pid, "s1", "measured_recurrence", 90.0, 2_000_000, mid))
         conn.commit()
         text = artifacts.compiled_recap(conn, 2026, 5)
-        self.assertIn("the commons saved you ~1.5h / ~$6.0 this month", text)
+        self.assertIn("the commons saved you ~1.5h / ~$10.0 this month", text)
 
     def test_recap_omits_savings_line_when_zero(self):
         conn = self.get_conn()
@@ -369,7 +369,7 @@ class TestCLISavings(HookTestCase):
         out = buf.getvalue()
         self.assertEqual(rc, 0)
         self.assertIn("~1.5h", out)
-        self.assertIn("~$6.0", out)
+        self.assertIn("~$10.0", out)
 
     def test_cli_savings_empty_is_clean(self):
         buf = io.StringIO()

@@ -13,7 +13,7 @@ is emitted here; that outbound view is the server plan's job.
 import json
 from datetime import datetime, timezone
 
-DEFAULT_PRICE_PER_MTOK = 3.0
+DEFAULT_PRICE_PER_MTOK = 5.0
 TOKEN_CAP = 2_000_000
 TOKENS_PER_TURN_EST = 1500
 
