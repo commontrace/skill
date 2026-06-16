@@ -112,7 +112,8 @@ class TestSavingsSchema(HookTestCase):
 
 
 class TestSavingsPrune(HookTestCase):
-    def test_prune_stale_cache_deletes_old_savings_events(self):
+    def test_prune_stale_cache_preserves_old_savings_events(self):
+        """savings_events is a permanent ledger — prune must NOT delete old rows."""
         conn = self.get_conn()
         old_ts = time.time() - 91 * DAY
         conn.execute(
@@ -125,7 +126,7 @@ class TestSavingsPrune(HookTestCase):
             conn.execute("SELECT COUNT(*) FROM savings_events").fetchone()[0], 1)
         local_store.prune_stale_cache(conn)
         self.assertEqual(
-            conn.execute("SELECT COUNT(*) FROM savings_events").fetchone()[0], 0)
+            conn.execute("SELECT COUNT(*) FROM savings_events").fetchone()[0], 1)
 
 
 class TestLedgerHelpers(HookTestCase):

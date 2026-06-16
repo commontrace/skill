@@ -341,6 +341,19 @@ class TestCompiledRecapSavings(HookTestCase):
         text = artifacts.compiled_recap(conn, 2026, 5)
         self.assertNotIn("the commons saved you", text)
 
+    def test_recap_shows_savings_line_when_minutes_only(self):
+        """OR gate: minutes > 0, tokens == 0 must still show savings line."""
+        conn = self.get_conn()
+        pid = local_store.ensure_project(conn, "/test-project")
+        mid = self._seed_month_session(conn, pid)
+        conn.execute(
+            "INSERT INTO savings_events (project_id, session_id, event_type, "
+            "minutes_saved, tokens_saved, created_at) VALUES (?,?,?,?,?,?)",
+            (pid, "s1", "measured_recurrence", 30.0, 0, mid))
+        conn.commit()
+        text = artifacts.compiled_recap(conn, 2026, 5)
+        self.assertIn("the commons saved you", text)
+
     def test_savings_outside_month_not_counted(self):
         conn = self.get_conn()
         pid = local_store.ensure_project(conn, "/test-project")

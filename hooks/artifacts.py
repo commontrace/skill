@@ -366,7 +366,7 @@ def compiled_recap(conn, year, month):
             "SELECT COALESCE(SUM(minutes_saved), 0), "
             "COALESCE(SUM(tokens_saved), 0) FROM savings_events "
             "WHERE created_at BETWEEN ? AND ?", (start, end)).fetchone()
-        if sav and (sav[0] > 0 and sav[1] > 0):
+        if sav and (sav[0] > 0 or sav[1] > 0):
             from savings import money_usd, fmt_duration
             lines.append(
                 f"  the commons saved you {fmt_duration(sav[0])} / ~${money_usd(sav[1])} "

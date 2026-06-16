@@ -157,6 +157,24 @@ class TestPruning(HookTestCase):
             "SELECT signature FROM error_signatures")}
         self.assertEqual(kept, {"old-resolved"})
 
+    def test_savings_events_survive_prune(self):
+        """savings_events is a ledger — old rows must NOT be deleted by prune."""
+        conn = self.get_conn()
+        pid = local_store.ensure_project(conn, "/p")
+        now = time.time()
+        # Insert a savings_event older than the 90-day prune horizon.
+        conn.execute(
+            "INSERT INTO savings_events "
+            "(project_id, session_id, event_type, minutes_saved, tokens_saved, "
+            "created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (pid, "old-session", "measured_recurrence", 5.0, 1000,
+             now - 100 * 86400))
+        conn.commit()
+        local_store.prune_stale_cache(conn)
+        totals = local_store.savings_totals(conn)
+        self.assertGreaterEqual(totals["events"], 1,
+            "savings_events must not be pruned — ledger rows must survive")
+
 
 if __name__ == "__main__":
     unittest.main()

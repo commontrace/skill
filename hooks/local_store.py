@@ -633,7 +633,7 @@ def prune_stale_cache(conn: sqlite3.Connection) -> None:
     - trace_cache (downvoted): 7 days after last seen
     - trigger_feedback: 60 days
     - error_signatures: 90 days unresolved, 180 days resolved (a stored fix is the product — keep it longer)
-    - savings_events: 90 days
+    - savings_events: NEVER pruned — permanent ledger (lifetime savings must not erode)
     """
     now = time.time()
     conn.execute(
@@ -661,10 +661,6 @@ def prune_stale_cache(conn: sqlite3.Connection) -> None:
         "DELETE FROM error_signatures "
         "WHERE resolved_at IS NOT NULL AND last_seen_at < ?",
         (now - 180 * 86400,),
-    )
-    conn.execute(
-        "DELETE FROM savings_events WHERE created_at < ?",
-        (now - 90 * 86400,),
     )
     conn.commit()
     conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
