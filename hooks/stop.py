@@ -260,6 +260,71 @@ def mark_prompted(session_key: str, kind: str, sub: str = "") -> None:
         pass
 
 
+# --- Reinforcement loop ----------------------------------------------------
+# Nudge pattern weights by each trigger's real consumption track record.
+# Pure-structural: reads SQLite trigger counters, no LLM. A pattern is only
+# adjusted once its mapped triggers have fired at least MIN_FIRED times, so
+# cold-start sessions leave scoring untouched.
+MIN_FIRED = 3
+
+# Map a scored detection pattern to the trigger name(s) whose track record
+# should reinforce it. Patterns absent from this map are never adjusted.
+PATTERN_TO_TRIGGERS = {
+    "error_resolution": ("error_recurrence", "bash_error"),
+    "workaround": ("error_recurrence", "bash_error"),
+    "dependency_resolution": ("error_recurrence", "bash_error"),
+    "novelty_encounter": ("domain_entry",),
+}
+
+
+def _clamp(lo, hi, val):
+    return max(lo, min(hi, val))
+
+
+def _is_protected(pattern):
+    """High-signal patterns may be boosted but never demoted below 1.0x."""
+    return pattern == "error_resolution" or pattern.startswith("security")
+
+
+def _pattern_effectiveness(pattern, effectiveness):
+    """Aggregate fired/consumed across all triggers mapped to `pattern`.
+
+    Returns {"fired", "consumed", "rate"} or None when the pattern is
+    unmapped or its triggers never fired.
+    """
+    triggers = PATTERN_TO_TRIGGERS.get(pattern)
+    if not triggers:
+        return None
+    fired = consumed = 0
+    for t in triggers:
+        e = effectiveness.get(t)
+        if e:
+            fired += e["fired"]
+            consumed += e["consumed"]
+    if fired <= 0:
+        return None
+    return {"fired": fired, "consumed": consumed, "rate": round(consumed / fired, 2)}
+
+
+def _apply_reinforcement(scores, effectiveness):
+    """Scale pattern scores in place by their trigger consumption rate.
+
+    multiplier = clamp(lo, 1.3, 0.85 + 0.5 * rate). Protected patterns floor
+    at 1.0 (boost-only); others floor at 0.7. No-op on empty effectiveness or
+    when a pattern's triggers fired fewer than MIN_FIRED times.
+    """
+    if not effectiveness:
+        return
+    for pattern in list(scores):
+        if scores[pattern] <= 0:
+            continue
+        e = _pattern_effectiveness(pattern, effectiveness)
+        if not e or e["fired"] < MIN_FIRED:
+            continue
+        lo = 1.0 if _is_protected(pattern) else 0.7
+        scores[pattern] *= _clamp(lo, 1.3, 0.85 + 0.5 * e["rate"])
+
+
 def compute_importance(state_dir: Path) -> tuple[float, str, dict]:
     """Compute weighted importance score from all structural signals.
 
