@@ -325,7 +325,7 @@ def _apply_reinforcement(scores, effectiveness):
         scores[pattern] *= _clamp(lo, 1.3, 0.85 + 0.5 * e["rate"])
 
 
-def compute_importance(state_dir: Path) -> tuple[float, str, dict]:
+def compute_importance(state_dir: Path, effectiveness: dict | None = None) -> tuple[float, str, dict]:
     """Compute weighted importance score from all structural signals.
 
     Returns: (score, top_pattern_name, evidence_dict)
@@ -589,6 +589,9 @@ def compute_importance(state_dir: Path) -> tuple[float, str, dict]:
                         proximity = 1.0 - (dt / WINDOW_SECONDS)
                         scores[pattern] *= (1.0 + 0.3 * proximity)
                         break
+
+    # Reinforcement: nudge pattern weights by each trigger's track record.
+    _apply_reinforcement(scores, effectiveness)
 
     # Total score
     total = sum(scores.values())
@@ -1137,7 +1140,20 @@ def main() -> None:
             return
 
     # Compute importance score
-    score, top_pattern, top_evidence = compute_importance(state_dir)
+    effectiveness = None
+    try:
+        from local_store import _get_conn, get_trigger_effectiveness
+        pid_path = state_dir / "project_id"
+        if pid_path.exists():
+            project_id = int(pid_path.read_text(encoding="utf-8").strip())
+            conn = _get_conn()
+            try:
+                effectiveness = get_trigger_effectiveness(conn, project_id)
+            finally:
+                conn.close()
+    except Exception:
+        effectiveness = None
+    score, top_pattern, top_evidence = compute_importance(state_dir, effectiveness)
 
     if score < IMPORTANCE_THRESHOLD:
         return

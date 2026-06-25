@@ -68,5 +68,33 @@ class ReinforcementUnitTest(unittest.TestCase):
         assert scores["error_resolution"] == 0.0
 
 
+from base import HookTestCase
+from session_state import append_event
+
+
+class ReinforcementIntegrationTest(HookTestCase):
+    def _seed_error_resolution(self):
+        """errors t=100, change t=150, resolution t=200 -> error_resolution fires."""
+        sd = self.state_dir
+        append_event(sd, "errors.jsonl", {"t": 100})
+        append_event(sd, "changes.jsonl", {"t": 150, "file": "a.py"})
+        append_event(sd, "resolutions.jsonl", {"t": 200})
+        return sd
+
+    def test_default_param_preserves_legacy(self):
+        sd = self._seed_error_resolution()
+        assert stop.compute_importance(sd) == stop.compute_importance(sd, None)
+
+    def test_effectiveness_boosts_error_resolution(self):
+        sd = self._seed_error_resolution()
+        base, _, _ = stop.compute_importance(sd)
+        eff = {"error_recurrence": {"fired": 5, "consumed": 5, "rate": 1.0}}
+        boosted, _, _ = stop.compute_importance(sd, eff)
+        # error_resolution (3.0) is the only mapped pattern firing on this seed;
+        # rate 1.0 -> *1.3 -> +0.9. Co-firing unmapped patterns don't affect
+        # the delta because reinforcement only touches mapped patterns.
+        self.assertAlmostEqual(boosted - base, 0.9, places=5)
+
+
 if __name__ == "__main__":
     unittest.main()
