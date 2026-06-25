@@ -617,7 +617,7 @@ def get_cached_traces(conn: sqlite3.Connection, project_id: int,
     rows = conn.execute(
         "SELECT trace_id, title, use_count FROM trace_cache "
         "WHERE project_id = ? AND use_count > 0 "
-        "ORDER BY last_seen_at DESC LIMIT ?",
+        "ORDER BY use_count DESC, last_seen_at DESC LIMIT ?",
         (project_id, limit),
     ).fetchall()
     return [{"trace_id": r["trace_id"], "title": r["title"],
