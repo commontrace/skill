@@ -596,7 +596,7 @@ def _read_context_fingerprint(state_dir: Path) -> dict | None:
 
 
 def _build_candidate(score: float, top_pattern: str, evidence: dict,
-                     state_dir: Path) -> dict:
+                     state_dir: Path, transcript_path: str = "") -> dict:
     """Build a structured candidate payload + human prompt from detection state.
 
     Returns dict with: score, top_pattern, evidence, metadata_json,
@@ -713,6 +713,18 @@ def _build_candidate(score: float, top_pattern: str, evidence: dict,
         file_counts[f] = file_counts.get(f, 0) + 1
     max_iterations = max(file_counts.values()) if file_counts else 0
 
+    # Measured token cost of the resolution window (rides with the trace).
+    # No LLM — a real sum of message.usage over the first-error->resolved span.
+    from savings import sum_usage, TOKENS_PER_TURN_EST
+    if timestamps:
+        tokens_to_resolution = sum_usage(
+            transcript_path, min(timestamps), max(timestamps))
+    else:
+        tokens_to_resolution = 0
+    if tokens_to_resolution <= 0:
+        # Conservative legacy floor when the window has no measurable usage.
+        tokens_to_resolution = (len(errors) + max_iterations) * TOKENS_PER_TURN_EST
+
     # Include user emphasis score if detected
     emphasis_events = read_events(state_dir, "emphasis.jsonl")
     peak_emphasis = 0.0
@@ -734,6 +746,7 @@ def _build_candidate(score: float, top_pattern: str, evidence: dict,
         f'"time_to_resolution_minutes": {duration_min}',
         f'"iteration_count": {max_iterations}',
         f'"user_emphasis": {peak_emphasis}',
+        f'"tokens_to_resolution": {tokens_to_resolution}',
     ]
     if first_error_tail:
         escaped_error = first_error_tail.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
@@ -795,6 +808,7 @@ def _build_candidate(score: float, top_pattern: str, evidence: dict,
         "time_to_resolution_minutes": duration_min,
         "iteration_count": max_iterations,
         "user_emphasis": peak_emphasis,
+        "tokens_to_resolution": tokens_to_resolution,
     }
     if first_error_tail:
         metadata_json["error_message"] = first_error_tail
@@ -838,6 +852,57 @@ def _persist_session(data: dict, state_dir: Path) -> None:
         prune_stale_cache(conn)
 
         conn.close()
+    except Exception:
+        pass
+
+
+def _book_savings(data: dict, state_dir: Path) -> None:
+    """Book measured-inbound savings for trace-attributed recurrences.
+
+    INBOUND ONLY (what the commons saved you). For each error signature in
+    THIS project that resolved with an attributed trace_id since this
+    session's window floor, credit:
+      minutes = sum of (resolved_at - created_at), capped 120 min/event
+      tokens  = measured message.usage over the session window
+    Wrapped end-to-end so it can never crash the Stop hook. No LLM.
+    """
+    try:
+        from savings import sum_usage
+        import local_store
+
+        project_id_path = state_dir / "project_id"
+        if not project_id_path.exists():
+            return
+        project_id = int(project_id_path.read_text(encoding="utf-8").strip())
+
+        times = [e["t"] for e in
+                 read_events(state_dir, "resolutions.jsonl")
+                 + read_events(state_dir, "errors.jsonl")
+                 if "t" in e]
+        if not times:
+            return
+        floor = min(times) - 5
+
+        conn = local_store._get_conn()
+        try:
+            rows = conn.execute(
+                "SELECT created_at, resolved_at FROM error_signatures "
+                "WHERE project_id = ? AND trace_id IS NOT NULL "
+                "AND resolved_at IS NOT NULL AND resolved_at >= ?",
+                (project_id, floor),
+            ).fetchall()
+            if not rows:
+                return
+            minutes = sum(
+                min(max(r["resolved_at"] - r["created_at"], 0) / 60.0, 120.0)
+                for r in rows)
+            tokens = sum_usage(
+                data.get("transcript_path", ""), min(times) - 5, max(times) + 5)
+            local_store.book_session_saving(
+                conn, project_id, data.get("session_id", ""), minutes, tokens)
+            conn.commit()
+        finally:
+            conn.close()
     except Exception:
         pass
 
@@ -964,6 +1029,9 @@ def main() -> None:
     # Persist session data to SQLite
     _persist_session(data, state_dir)
 
+    # Book measured-inbound savings (best-effort; never crashes the hook)
+    _book_savings(data, state_dir)
+
     # Report trigger stats (best-effort)
     _report_trigger_stats(data, state_dir)
 
@@ -1013,7 +1081,7 @@ def main() -> None:
         return
 
     mark_prompted(session_key, "score")
-    candidate = _build_candidate(score, top_pattern, top_evidence, state_dir)
+    candidate = _build_candidate(score, top_pattern, top_evidence, state_dir, transcript_path=data.get("transcript_path", ""))
 
     # Husk guard: never silently publish empty / templated / noise-tainted
     # candidates. Those route to the manual-review pending file below instead

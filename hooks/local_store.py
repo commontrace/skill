@@ -1,6 +1,6 @@
 """Persistent local store for cross-session working memory.
 
-SQLite database at ~/.commontrace/local.db (5-table working memory cache).
+SQLite database at ~/.commontrace/local.db (6-table working memory cache).
 The remote PostgreSQL API is the source of truth. This store tracks only:
   - projects: identity and language/framework metadata
   - sessions: per-session stats and top pattern
@@ -20,7 +20,7 @@ from pathlib import Path
 
 DB_PATH = Path.home() / ".commontrace" / "local.db"
 
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -84,6 +84,21 @@ CREATE TABLE IF NOT EXISTS error_signatures (
     UNIQUE(project_id, signature)
 );
 CREATE INDEX IF NOT EXISTS idx_error_sig_project ON error_signatures(project_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS savings_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+    session_id TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    minutes_saved REAL DEFAULT 0,
+    tokens_saved INTEGER DEFAULT 0,
+    source_label TEXT,
+    trace_id TEXT,
+    signature TEXT NOT NULL DEFAULT '*session*',
+    created_at REAL NOT NULL,
+    UNIQUE(session_id, event_type, signature)
+);
+CREATE INDEX IF NOT EXISTS idx_savings_created ON savings_events(project_id, created_at DESC);
 """
 
 
@@ -96,6 +111,8 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
         _migrate_to_v2(conn)
     if version < 3:
         _migrate_to_v3(conn)
+    if version < 4:
+        _migrate_to_v4(conn)
     conn.execute(f"PRAGMA user_version = {CURRENT_SCHEMA_VERSION}")
     conn.commit()
 
@@ -211,6 +228,31 @@ def _migrate_to_v3(conn: sqlite3.Connection) -> None:
             ALTER TABLE error_signatures_v3 RENAME TO error_signatures;
             COMMIT;
         """)
+
+
+def _migrate_to_v4(conn: sqlite3.Connection) -> None:
+    """Migrate v3 -> v4: add the savings_events ledger. Additive only.
+
+    No table rebuild — just create the new table + index if absent. Existing
+    rows in every other table are untouched.
+    """
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS savings_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+            session_id TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            minutes_saved REAL DEFAULT 0,
+            tokens_saved INTEGER DEFAULT 0,
+            source_label TEXT,
+            trace_id TEXT,
+            signature TEXT NOT NULL DEFAULT '*session*',
+            created_at REAL NOT NULL,
+            UNIQUE(session_id, event_type, signature)
+        );
+        CREATE INDEX IF NOT EXISTS idx_savings_created
+            ON savings_events(project_id, created_at DESC);
+    """)
 
 
 def _get_conn() -> sqlite3.Connection:
@@ -402,6 +444,71 @@ def record_resolution(conn: sqlite3.Connection, project_id: int,
 
 
 # ---------------------------------------------------------------------------
+# Savings ledger (inbound — what the commons saved you)
+# ---------------------------------------------------------------------------
+
+def book_session_saving(conn: sqlite3.Connection, project_id: int,
+                        session_id: str, minutes: float, tokens: int,
+                        event_type: str = "measured_recurrence",
+                        source_label: str = "measured",
+                        trace_id: str = None) -> bool:
+    """Book one inbound saving for this session. Guarded + idempotent.
+
+    Returns False (and writes nothing) when both minutes and tokens are
+    non-positive. The signature column defaults to '*session*' so the
+    UNIQUE(session_id, event_type, signature) constraint enforces one
+    booking per (session, event_type) — INSERT OR IGNORE drops a repeat.
+    Returns True only when a new row was actually inserted.
+    """
+    if minutes < 0 or tokens < 0:
+        raise ValueError(
+            f'savings values must be non-negative: minutes={minutes}, tokens={tokens}')
+    if minutes <= 0 and tokens <= 0:
+        return False
+    cur = conn.execute(
+        "INSERT OR IGNORE INTO savings_events "
+        "(project_id, session_id, event_type, minutes_saved, tokens_saved, "
+        "source_label, trace_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (project_id, session_id, event_type, minutes, tokens,
+         source_label, trace_id, time.time()),
+    )
+    return cur.rowcount > 0
+
+def savings_totals(conn: sqlite3.Connection, since: float = None) -> dict:
+    """Roll up the savings ledger.
+
+    Returns {"minutes": float, "tokens": int, "events": int}. When `since`
+    is given, only rows with created_at >= since are counted.
+    """
+    if since is None:
+        row = conn.execute(
+            "SELECT COALESCE(SUM(minutes_saved), 0), "
+            "COALESCE(SUM(tokens_saved), 0), COUNT(*) FROM savings_events"
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT COALESCE(SUM(minutes_saved), 0), "
+            "COALESCE(SUM(tokens_saved), 0), COUNT(*) FROM savings_events "
+            "WHERE created_at >= ?", (since,)
+        ).fetchone()
+    return {"minutes": float(row[0]), "tokens": int(row[1]),
+            "events": int(row[2])}
+
+def prev_session_started_at(conn: sqlite3.Connection,
+                            current_session_id: str) -> float | None:
+    """Started-at of the most recent session OTHER than the current one.
+
+    Used as the lower bound for the 'since last session' delta. Returns None
+    when no other session exists.
+    """
+    row = conn.execute(
+        "SELECT MAX(started_at) FROM sessions WHERE id != ?",
+        (current_session_id,),
+    ).fetchone()
+    return row[0] if row and row[0] is not None else None
+
+
+# ---------------------------------------------------------------------------
 # Trigger feedback
 # ---------------------------------------------------------------------------
 
@@ -526,6 +633,7 @@ def prune_stale_cache(conn: sqlite3.Connection) -> None:
     - trace_cache (downvoted): 7 days after last seen
     - trigger_feedback: 60 days
     - error_signatures: 90 days unresolved, 180 days resolved (a stored fix is the product — keep it longer)
+    - savings_events: NEVER pruned — permanent ledger (lifetime savings must not erode)
     """
     now = time.time()
     conn.execute(

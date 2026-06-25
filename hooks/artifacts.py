@@ -14,6 +14,7 @@ so this module derives local proxies from error_signatures:
 import calendar
 import math
 import os
+import sqlite3
 import sys
 import time
 from pathlib import Path
@@ -360,6 +361,18 @@ def compiled_recap(conn, year, month):
         lines.append(
             f"  {sess['contribs']} trace{'s' if sess['contribs'] != 1 else ''} "
             f"contributed to the commons")
+    try:
+        sav = conn.execute(
+            "SELECT COALESCE(SUM(minutes_saved), 0), "
+            "COALESCE(SUM(tokens_saved), 0) FROM savings_events "
+            "WHERE created_at BETWEEN ? AND ?", (start, end)).fetchone()
+        if sav and (sav[0] > 0 or sav[1] > 0):
+            from savings import money_usd, fmt_duration
+            lines.append(
+                f"  the commons saved you {fmt_duration(sav[0])} / ~${money_usd(sav[1])} "
+                f"this month")
+    except sqlite3.OperationalError:
+        pass
     lines.append("")
     lines.append("  Your agent's own numbers, from your machine. "
                  "— commontrace.org")
@@ -419,8 +432,22 @@ def main(argv):
                 return 0
             print(f"No activity recorded for {year}-{month:02d}.")
             return 0
+        if cmd == "savings":
+            from savings import money_usd, fmt_duration
+            from local_store import savings_totals
+            totals = savings_totals(conn)
+            if totals["events"] == 0:
+                print("No savings recorded yet — keep using CommonTrace.")
+                return 0
+            print("CommonTrace savings (lifetime, inbound)")
+            print(f"  time saved   : {fmt_duration(totals['minutes'])}")
+            print(f"  money saved  : ~${money_usd(totals['tokens'])}")
+            print(f"  events       : {totals['events']}")
+            print("  Measured from your own resolutions, on your machine. "
+                  "— commontrace.org")
+            return 0
         print(f"Unknown command: {cmd}. "
-              f"Usage: artifacts.py [brain|recap [YYYY-MM]]")
+              f"Usage: artifacts.py [brain|recap [YYYY-MM]|savings]")
         return 1
     finally:
         conn.close()

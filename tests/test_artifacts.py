@@ -308,3 +308,91 @@ class TestWriteArtifactAndCLI(HookTestCase):
         with contextlib.redirect_stdout(buf):
             rc = artifacts.main(["artifacts.py", "bogus"])
         self.assertEqual(rc, 1)
+
+
+class TestCompiledRecapSavings(HookTestCase):
+    def _seed_month_session(self, conn, pid, year=2026, month=5):
+        start, _ = artifacts.month_range(year, month)
+        mid = start + 10 * DAY
+        conn.execute(
+            "INSERT INTO sessions (id, project_id, started_at, error_count, "
+            "resolution_count, contribution_count, top_pattern) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("s1", pid, mid, 5, 2, 0, "error_resolution"))
+        conn.commit()
+        return mid
+
+    def test_recap_shows_savings_line_when_present(self):
+        conn = self.get_conn()
+        pid = local_store.ensure_project(conn, "/test-project")
+        mid = self._seed_month_session(conn, pid)
+        conn.execute(
+            "INSERT INTO savings_events (project_id, session_id, event_type, "
+            "minutes_saved, tokens_saved, created_at) VALUES (?,?,?,?,?,?)",
+            (pid, "s1", "measured_recurrence", 90.0, 2_000_000, mid))
+        conn.commit()
+        text = artifacts.compiled_recap(conn, 2026, 5)
+        self.assertIn("the commons saved you ~1.5h / ~$10.0 this month", text)
+
+    def test_recap_omits_savings_line_when_zero(self):
+        conn = self.get_conn()
+        pid = local_store.ensure_project(conn, "/test-project")
+        self._seed_month_session(conn, pid)  # session but no savings_events
+        text = artifacts.compiled_recap(conn, 2026, 5)
+        self.assertNotIn("the commons saved you", text)
+
+    def test_recap_shows_savings_line_when_minutes_only(self):
+        """OR gate: minutes > 0, tokens == 0 must still show savings line."""
+        conn = self.get_conn()
+        pid = local_store.ensure_project(conn, "/test-project")
+        mid = self._seed_month_session(conn, pid)
+        conn.execute(
+            "INSERT INTO savings_events (project_id, session_id, event_type, "
+            "minutes_saved, tokens_saved, created_at) VALUES (?,?,?,?,?,?)",
+            (pid, "s1", "measured_recurrence", 30.0, 0, mid))
+        conn.commit()
+        text = artifacts.compiled_recap(conn, 2026, 5)
+        self.assertIn("the commons saved you", text)
+
+    def test_savings_outside_month_not_counted(self):
+        conn = self.get_conn()
+        pid = local_store.ensure_project(conn, "/test-project")
+        self._seed_month_session(conn, pid)
+        other, _ = artifacts.month_range(2026, 3)  # different month
+        conn.execute(
+            "INSERT INTO savings_events (project_id, session_id, event_type, "
+            "minutes_saved, tokens_saved, created_at) VALUES (?,?,?,?,?,?)",
+            (pid, "s1", "measured_recurrence", 90.0, 2_000_000,
+             other + 5 * DAY))
+        conn.commit()
+        text = artifacts.compiled_recap(conn, 2026, 5)
+        self.assertNotIn("the commons saved you", text)
+
+
+class TestCLISavings(HookTestCase):
+    def test_cli_savings_prints_lifetime(self):
+        conn = self.get_conn()
+        pid = local_store.ensure_project(conn, "/p")
+        local_store.book_session_saving(conn, pid, "s1", 90.0, 2_000_000)
+        conn.commit()
+        conn.close()
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = artifacts.main(["artifacts.py", "savings"])
+        out = buf.getvalue()
+        self.assertEqual(rc, 0)
+        self.assertIn("~1.5h", out)
+        self.assertIn("~$10.0", out)
+
+    def test_cli_savings_empty_is_clean(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = artifacts.main(["artifacts.py", "savings"])
+        self.assertEqual(rc, 0)
+
+    def test_cli_usage_string_lists_savings(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = artifacts.main(["artifacts.py", "bogus"])
+        self.assertEqual(rc, 1)
+        self.assertIn("savings", buf.getvalue())
