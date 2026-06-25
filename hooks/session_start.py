@@ -29,7 +29,7 @@ PENDING_DIR = CONFIG_DIR / "pending"
 PING_MARKER = CONFIG_DIR / "last_ping_date"
 API_BASE = "https://api.commontrace.org"
 MCP_URL = "https://mcp.commontrace.org/mcp"
-SKILL_VERSION = "0.5.2"
+SKILL_VERSION = "0.5.4"
 
 SETUP_FAILED_NOTICE = (
     "CommonTrace setup could not complete (API unreachable). The skill will "
@@ -343,19 +343,73 @@ def ensure_setup() -> str | None:
                 pass
 
 
+# Directories never worth scanning for language signal (deps, build output,
+# vendored code). Skipped during the recursive source scan below.
+_SCAN_IGNORE_DIRS = {
+    ".git", "node_modules", ".venv", "venv", "env", "__pycache__", "dist",
+    "build", ".next", "target", "vendor", ".mypy_cache", ".pytest_cache",
+    "site-packages", ".tox", ".cache", "coverage", ".gradle", "Pods",
+}
+
+
+def _in_git_repo(cwd_path: Path) -> bool:
+    """True if cwd is inside a git work tree (cwd or any ancestor has .git).
+
+    The old check looked only at ``cwd/.git`` — that misses every subdirectory
+    of a repo (e.g. a monorepo's ``api/`` package), which all share one ``.git``
+    at the repo root. Walk parents instead so detection works from anywhere.
+    """
+    p = cwd_path
+    for _ in range(40):  # bounded walk to the filesystem root
+        if (p / ".git").exists():
+            return True
+        if p.parent == p:
+            break
+        p = p.parent
+    return False
+
+
+def _scan_languages(cwd_path: Path, max_depth: int = 4,
+                    max_files: int = 4000) -> dict[str, int]:
+    """Count source files by extension, recursively but bounded.
+
+    The old logic used a non-recursive ``iterdir()`` so it only saw files
+    sitting directly in cwd. A monorepo root whose source lives under ``api/``,
+    ``ops/`` etc. has none at the top level → no language detected → the hook
+    bailed and never surfaced anything. Walk a few levels deep (skipping deps
+    and build output, capped) so nested layouts register.
+    """
+    counts: dict[str, int] = {}
+    seen = 0
+    root_depth = len(cwd_path.parts)
+    try:
+        for dirpath, dirnames, filenames in os.walk(cwd_path):
+            depth = len(Path(dirpath).parts) - root_depth
+            if depth >= max_depth:
+                dirnames[:] = []  # don't descend further
+            # Prune noise dirs and hidden dirs in place (os.walk honors this)
+            dirnames[:] = [
+                d for d in dirnames
+                if d not in _SCAN_IGNORE_DIRS and not d.startswith(".")
+            ]
+            for fn in filenames:
+                ext = os.path.splitext(fn)[1]
+                if ext in SOURCE_EXTENSIONS:
+                    counts[ext] = counts.get(ext, 0) + 1
+                    seen += 1
+                    if seen >= max_files:
+                        return counts
+    except OSError:
+        return counts
+    return counts
+
+
 def detect_context(cwd: str) -> str | None:
     cwd_path = Path(cwd)
-    if not (cwd_path / ".git").exists():
+    if not _in_git_repo(cwd_path):
         return None
 
-    extension_counts: dict[str, int] = {}
-    try:
-        for entry in cwd_path.iterdir():
-            if entry.is_file() and entry.suffix in SOURCE_EXTENSIONS:
-                extension_counts[entry.suffix] = extension_counts.get(entry.suffix, 0) + 1
-    except OSError:
-        return None
-
+    extension_counts = _scan_languages(cwd_path)
     if not extension_counts:
         return None
 
@@ -574,16 +628,10 @@ def main() -> None:
     if not query:
         return
 
-    # Determine primary language
+    # Determine primary language (same bounded recursive scan as detect_context,
+    # so nested-source monorepos resolve a language instead of bailing here).
     cwd_path = Path(cwd)
-    extension_counts: dict[str, int] = {}
-    try:
-        for entry in cwd_path.iterdir():
-            if entry.is_file() and entry.suffix in SOURCE_EXTENSIONS:
-                extension_counts[entry.suffix] = extension_counts.get(entry.suffix, 0) + 1
-    except OSError:
-        return
-
+    extension_counts = _scan_languages(cwd_path)
     if not extension_counts:
         return
     primary_ext = max(extension_counts, key=lambda e: extension_counts[e])
