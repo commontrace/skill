@@ -139,19 +139,19 @@ def _barcode(word="commontrace"):
 
 
 def contribution_banner(title, where, minutes, error_count, tokens,
-                        trace_id="", ts=None, saved=False):
+                        trace_id="", ts=None, mode="contributed"):
     """The recognizable CommonTrace receipt.
 
-    Two tenses, one figure:
-      saved=False (default) — a contribution. Present tense "SAVES TIME /
-        SAVES MONEY": this trace *will* save others or your future self.
-      saved=True — a retrieval that paid off. Past tense "TIME SAVED /
-        MONEY SAVED": the commons *already* saved you this on a recurrence.
+    Three states, one figure (mode=):
+      "suggest"     — a proposed trace awaiting approval. "WOULD SAVE",
+                      header SUGGESTED CONTRIBUTION, footer asks to approve.
+      "contributed" — just saved (default). Present tense "SAVES TIME /
+                      SAVES MONEY": this trace *will* save others / future you.
+      "retrieved"   — a retrieval that paid off. Past tense "TIME SAVED /
+                      MONEY SAVED": the commons *already* saved you this.
 
     Structural only: title/where are caller-supplied labels; everything else
-    is a number. The footer barcode spells 'commontrace'. Shown on every
-    contribution (auto-submit systemMessage + the /trace command) so the
-    commons is visible even in full-auto. Never raises.
+    is a number. The footer barcode spells 'commontrace'. Never raises.
     """
     from savings import money_usd, fmt_duration
     try:
@@ -169,13 +169,27 @@ def contribution_banner(title, where, minutes, error_count, tokens,
         gap = max(1, inner - len(label) - len(value))
         return "        " + label + " " * gap + value
 
-    time_label = "TIME SAVED" if saved else "SAVES TIME"
-    money_label = "MONEY SAVED" if saved else "SAVES MONEY"
+    mode = (mode or "contributed").lower()
+    if mode == "suggest":
+        header = "        SUGGESTED CONTRIBUTION"
+        time_label, money_label = "WOULD SAVE TIME", "WOULD SAVE MONEY"
+        footer = ["        others + your future self",
+                  "        approve?   →   yes   ·   skip"]
+    elif mode == "retrieved":
+        header = f"        KNOWLEDGE COMMONS   #{ref}"
+        time_label, money_label = "TIME SAVED", "MONEY SAVED"
+        footer = ["        for others + your future self",
+                  "          ✨✨✨ thank you ✨✨✨"]
+    else:  # contributed
+        header = f"        KNOWLEDGE COMMONS   #{ref}"
+        time_label, money_label = "SAVES TIME", "SAVES MONEY"
+        footer = ["        for others + your future self",
+                  "          ✨✨✨ thank you ✨✨✨"]
 
     lines = [
         "        ⬡ C O M M O N T R A C E",
         pad + "═" * RECEIPT_WIDTH,
-        f"        KNOWLEDGE COMMONS   #{ref}",
+        header,
         f"        {tm}",
         pad + "-" * RECEIPT_WIDTH,
         f"        ITEM        {str(title)[:20].rstrip()}",
@@ -186,8 +200,7 @@ def contribution_banner(title, where, minutes, error_count, tokens,
         row(time_label, dur),
         row(money_label, f"~${money:.2f}"),
         pad + "═" * RECEIPT_WIDTH,
-        "        for others + your future self",
-        "          ✨✨✨ thank you ✨✨✨",
+        *footer,
         "",
         pad + _barcode("commontrace"),
     ]
@@ -495,7 +508,7 @@ def main(argv):
             error_count=_num("errors", int),
             tokens=_num("tokens", int),
             trace_id=kv.get("id", ""),
-            saved=kv.get("saved", "").lower() in ("1", "true", "yes"),
+            mode=kv.get("mode", "contributed"),
         ))
         return 0
     from local_store import _get_conn

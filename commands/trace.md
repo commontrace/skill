@@ -1,6 +1,38 @@
 ---
-description: Review pending CommonTrace contributions or contribute a new trace
-allowed-tools: ["mcp__commontrace__contribute_trace", "mcp__commontrace__amend_trace", "mcp__commontrace__list_tags", "Read", "Bash", "AskUserQuestion"]
+description: Contribute to CommonTrace — targeted from the discussion (/trace <keywords>) or review pending
+argument-hint: "[keywords about the issue to trace, e.g. gandi http]"
+allowed-tools: ["mcp__commontrace__contribute_trace", "mcp__commontrace__amend_trace", "mcp__commontrace__search_traces", "mcp__commontrace__list_tags", "Read", "Bash", "AskUserQuestion"]
+---
+
+`$ARGUMENTS` decides the mode:
+
+- **Arguments present** (e.g. `/trace gandi http`) → **Targeted suggestion** flow below. Treat the arguments as keywords pointing at ONE specific problem discussed in THIS conversation.
+- **No arguments** (`/trace`) → skip to **Step 1** and review pending candidates.
+
+## Targeted suggestion (when `$ARGUMENTS` is non-empty)
+
+1. **Locate the issue.** Using the keywords `$ARGUMENTS` as a hint, scan the current conversation for the specific problem the user is pointing at — the exact error/blocker and how it was resolved. Do NOT invent; only use what was actually discussed. If nothing in the conversation matches the keywords, say so and stop.
+2. **Check for duplicates** with `mcp__commontrace__search_traces` on the issue. If a near-identical trace already exists, tell the user and offer to amend it instead of creating a new one.
+3. **Draft the trace** from the discussion:
+   - `title` — short, specific (e.g. "Gandi DNS: HTTP-01 ACME fails, use DNS-01").
+   - `context_text` — the problem: symptom, stack, what was tried.
+   - `solution_text` — what actually fixed it.
+   - `tags` — language / framework / domain; use `list_tags` to align with existing tags.
+   - Estimate `minutes` and `errors` from the conversation (rough is fine); `tokens` best-effort (`0` if unknown → money shows `~$0.00`).
+4. **Show the SUGGEST receipt** — render and print verbatim inside a code block:
+
+   ```
+   python3 "<skill-hooks-dir>/artifacts.py" banner mode=suggest \
+     title="<draft title>" \
+     where="<key file or service, e.g. gandi>" \
+     minutes=<estimate> errors=<estimate> tokens=<estimate>
+   ```
+
+5. **Ask approval** with `AskUserQuestion` (single choice): `Yes` → submit · `Edit` → refine a field, re-show the receipt · `Skip` → abort, save nothing.
+6. **On `Yes`** — call `mcp__commontrace__contribute_trace` with the drafted `title` / `context_text` / `solution_text` / `tags` and `metadata_json = {"detection_pattern": "user_directed", "time_to_resolution_minutes": <minutes>, "error_count": <errors>, "tokens_to_resolution": <tokens>}`. Then re-render the receipt in **`mode=contributed`** with `id=<new-trace-id>` and print it. Stop here — do not fall through to Step 1.
+
+`<skill-hooks-dir>` is the directory holding this plugin's hooks (the same `artifacts.py` the Stop hook uses).
+
 ---
 
 You are reviewing pending CommonTrace contribution candidates and walking the user through approval.
