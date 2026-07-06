@@ -47,7 +47,21 @@ Call `mcp__commontrace__contribute_trace` with:
 For `kind: amend`:
 Call `mcp__commontrace__amend_trace` with the trace_id and ask the user one short question for the proposed solution_text improvement. Submit.
 
-After successful submit, delete the candidate's line from the pending file (use `sed` or rewrite the file without that line). Report the new trace ID. If the candidate has `struggle_grid`, show it to the user with ` → https://commontrace.org/t/<new-trace-id>` appended — it is a paste-anywhere share line.
+After successful submit, delete the candidate's line from the pending file (use `sed` or rewrite the file without that line). Report the new trace ID.
+
+Then **show the CommonTrace receipt** — run the skill's banner renderer and print its output verbatim inside a code block:
+
+```
+python3 "<skill-hooks-dir>/artifacts.py" banner \
+  title="<candidate.title>" \
+  where="<basename of first evidence file, else candidate.top_pattern>" \
+  minutes=<metadata_json.time_to_resolution_minutes> \
+  errors=<metadata_json.error_count> \
+  tokens=<metadata_json.tokens_to_resolution> \
+  id=<new-trace-id>
+```
+
+`<skill-hooks-dir>` is the directory holding this plugin's hooks (the same `artifacts.py` the Stop hook uses). The receipt is the recognizable ⬡ CommonTrace figure showing the time/money this trace saves others or the contributor's future self — the same banner shown automatically on auto-contributions. It is a paste-anywhere share line.
 
 ### No
 Delete the candidate's line from the pending file. Move to next candidate without further questions.

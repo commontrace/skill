@@ -207,6 +207,41 @@ def _struggle_artifact(candidate, state_dir, trace_id=""):
         return None
 
 
+def _contribution_banner(candidate: dict, trace_id: str = "") -> str | None:
+    """Render the recognizable 'contribution saved' receipt for the Stop
+    systemMessage — so a contribution is visible even in full-auto mode.
+
+    Reuses the aggregate detection metadata already on the candidate (no new
+    data). Best-effort: never raises, never breaks the Stop hook.
+    """
+    try:
+        from artifacts import contribution_banner
+        meta = candidate.get("metadata_json") or {}
+        ev = candidate.get("evidence") or {}
+        where = ""
+        for key in ("config_files", "files", "fix_files",
+                    "security_files", "infra_files"):
+            val = ev.get(key)
+            if isinstance(val, str) and val:
+                where = Path(val).name
+                break
+            if isinstance(val, list) and val:
+                where = Path(val[0]).name
+                break
+        if not where:
+            where = (candidate.get("top_pattern", "") or "").replace("_", " ")
+        return contribution_banner(
+            title=candidate.get("title", "contribution"),
+            where=where,
+            minutes=meta.get("time_to_resolution_minutes", 0),
+            error_count=meta.get("error_count", 0),
+            tokens=meta.get("tokens_to_resolution", 0),
+            trace_id=trace_id,
+        )
+    except Exception:
+        return None
+
+
 def _build_title(top_pattern: str, evidence: dict, ctx_fp: dict | None) -> str:
     """Generate a short trace title from structural signals — no LLM."""
     lang = (ctx_fp or {}).get("language", "") if ctx_fp else ""
@@ -1179,12 +1214,10 @@ def main() -> None:
                 "top_pattern": candidate.get("top_pattern", ""),
                 "tags": candidate.get("suggested_tags", []),
             })
-            line = _struggle_artifact(candidate, state_dir, trace_id)
-            if line:
-                print(json.dumps({"systemMessage": (
-                    "CommonTrace captured this fight:\n" + line +
-                    "\n(saved to ~/.commontrace/artifacts/"
-                    "last-struggle.txt — paste it anywhere)")}))
+            _struggle_artifact(candidate, state_dir, trace_id)
+            banner = _contribution_banner(candidate, trace_id)
+            if banner:
+                print(json.dumps({"systemMessage": banner}))
             return
         # API failure: fall through to pending so nothing is lost
 

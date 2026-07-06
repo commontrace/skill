@@ -116,6 +116,84 @@ def struggle_line(grid, duration_min, error_count, trace_id=""):
     return line
 
 
+BAR_GLYPHS = "▏▎▍▌▋▊▉█"  # 8 monotone bar widths, thin → thick
+RECEIPT_WIDTH = 34
+
+
+def _barcode(word="commontrace"):
+    """Encode a word as a scannable-looking bar strip.
+
+    Each letter → two bars (its 0-25 alphabet index split across 8 glyph
+    widths, hi // 8 then lo % 8), thin separators between letters, guard bars
+    at both ends. Deterministic and decorative — the strip literally spells
+    the word. Non-letters are skipped. Never raises.
+    """
+    pairs = []
+    for ch in str(word).lower():
+        n = ord(ch) - 97
+        if 0 <= n < 26:
+            pairs.append(BAR_GLYPHS[n // 8] + BAR_GLYPHS[n % 8])
+    if not pairs:
+        return ""
+    return "║" + "│".join(pairs) + "║"
+
+
+def contribution_banner(title, where, minutes, error_count, tokens,
+                        trace_id="", ts=None, saved=False):
+    """The recognizable CommonTrace receipt.
+
+    Two tenses, one figure:
+      saved=False (default) — a contribution. Present tense "SAVES TIME /
+        SAVES MONEY": this trace *will* save others or your future self.
+      saved=True — a retrieval that paid off. Past tense "TIME SAVED /
+        MONEY SAVED": the commons *already* saved you this on a recurrence.
+
+    Structural only: title/where are caller-supplied labels; everything else
+    is a number. The footer barcode spells 'commontrace'. Shown on every
+    contribution (auto-submit systemMessage + the /trace command) so the
+    commons is visible even in full-auto. Never raises.
+    """
+    from savings import money_usd, fmt_duration
+    try:
+        money = money_usd(int(tokens or 0))
+    except Exception:
+        money = 0.0
+    dur = fmt_duration(minutes or 0)
+    tm = time.strftime("%Y-%m-%d   %H:%M", time.localtime(ts or time.time()))
+    ref = (str(trace_id) or "pending")[:6] or "pending"
+    plural = "s" if int(error_count or 0) != 1 else ""
+    inner = RECEIPT_WIDTH - 6
+    pad = " " * 7
+
+    def row(label, value):
+        gap = max(1, inner - len(label) - len(value))
+        return "        " + label + " " * gap + value
+
+    time_label = "TIME SAVED" if saved else "SAVES TIME"
+    money_label = "MONEY SAVED" if saved else "SAVES MONEY"
+
+    lines = [
+        "        ⬡ C O M M O N T R A C E",
+        pad + "═" * RECEIPT_WIDTH,
+        f"        KNOWLEDGE COMMONS   #{ref}",
+        f"        {tm}",
+        pad + "-" * RECEIPT_WIDTH,
+        f"        ITEM        {str(title)[:20].rstrip()}",
+        f"        WHERE       {str(where)[:20].rstrip()}",
+        f"        EFFORT      {int(round(minutes or 0))}m · "
+        f"{int(error_count or 0)} error{plural}",
+        pad + "-" * RECEIPT_WIDTH,
+        row(time_label, dur),
+        row(money_label, f"~${money:.2f}"),
+        pad + "═" * RECEIPT_WIDTH,
+        "        for others + your future self",
+        "          ✨✨✨ thank you ✨✨✨",
+        "",
+        pad + _barcode("commontrace"),
+    ]
+    return "\n".join(lines)
+
+
 def load_brain_data(conn):
     """Brain-graph dataset. No text leaves the rows: nodes carry only
     numbers; project hubs carry only language/framework labels (never
@@ -394,6 +472,32 @@ def write_artifact(name, content):
 
 def main(argv):
     cmd = argv[1] if len(argv) > 1 else "brain"
+    if cmd == "banner":
+        # key=value args, e.g.:
+        #   banner title="config discovery" where=sitemap.xml \
+        #          minutes=35 errors=1 tokens=420000 id=ab12cd
+        kv = {}
+        for arg in argv[2:]:
+            if "=" in arg:
+                key, val = arg.split("=", 1)
+                kv[key] = val
+
+        def _num(name, cast, default=0):
+            try:
+                return cast(kv.get(name) or default)
+            except (TypeError, ValueError):
+                return default
+
+        print(contribution_banner(
+            title=kv.get("title", "contribution"),
+            where=kv.get("where", ""),
+            minutes=_num("minutes", float),
+            error_count=_num("errors", int),
+            tokens=_num("tokens", int),
+            trace_id=kv.get("id", ""),
+            saved=kv.get("saved", "").lower() in ("1", "true", "yes"),
+        ))
+        return 0
     from local_store import _get_conn
     conn = _get_conn()
     try:
