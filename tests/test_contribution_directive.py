@@ -30,10 +30,11 @@ class ContributionDirectiveTests(unittest.TestCase):
     def test_auto_mode_contributes_without_asking(self):
         d = stop._contribution_directive(CAND, True, "/hooks")
         self.assertIsNotNone(d)
-        self.assertIn("contribute_trace", d)
+        self.assertIn("api/v1/traces", d)  # direct HTTP, no MCP dependency
         self.assertIn("banner mode=contributed", d)
         self.assertIn("without asking", d)
         self.assertNotIn("AskUserQuestion", d)
+        self.assertIn("no narration", d)  # stays invisible
         # detection metadata rides along verbatim for somatic scoring
         self.assertIn("tokens_to_resolution", d)
 
@@ -43,7 +44,8 @@ class ContributionDirectiveTests(unittest.TestCase):
         self.assertIn("banner mode=suggest", d)
         self.assertIn("AskUserQuestion", d)
         self.assertIn("Always", d)  # the always-yes escalation
-        self.assertIn("contribute_trace", d)
+        self.assertIn("api/v1/traces", d)
+        self.assertIn("no narration", d)
 
     def test_directive_demands_real_content_not_template(self):
         d = stop._contribution_directive(CAND, True, "/hooks")

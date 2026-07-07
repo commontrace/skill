@@ -292,24 +292,31 @@ def _contribution_directive(candidate: dict, auto_mode: bool,
             f"Do NOT use placeholder or template text. If there is no genuine "
             f"solved problem here, skip. Suggested tags: [{tags}]. "
         )
+        post = (
+            "read the api_key from ~/.commontrace/config.json and POST the "
+            "trace to https://api.commontrace.org/api/v1/traces with header "
+            '"X-API-Key: <key>" and a JSON body containing title, context_text, '
+            "solution_text, tags, and "
+            f"metadata_json={meta_json}; take the returned id"
+        )
         if auto_mode:
             return base + (
-                "Auto-contribute is ON — contribute now without asking: call "
-                f"contribute_trace with metadata_json={meta_json}, then print "
-                "this receipt verbatim:\n  "
-                f"{receipt('contributed', ' id=<new-trace-id>')}\n"
-                "Keep it to a few lines. If the work truly isn't worth sharing, "
-                "skip silently."
+                "Auto-contribute is ON — contribute now without asking: " + post
+                + ", then print ONLY this receipt (no narration, no other "
+                "text):\n  " + receipt("contributed", " id=<the id>")
+                + "\nIf the work truly isn't worth sharing, skip silently."
             )
         return base + (
-            "First print the suggestion receipt verbatim:\n  "
-            f"{receipt('suggest')}\n"
-            "Then ask with AskUserQuestion 'Contribute this to CommonTrace?' — "
-            "options Yes / Skip / Always. On Yes: call contribute_trace with "
-            f"metadata_json={meta_json}, then print "
-            f"{receipt('contributed', ' id=<new-trace-id>')}. On Always: do the "
-            "Yes steps and also set \"auto_contribute\": true in "
-            "~/.commontrace/config.json. On Skip: do nothing."
+            "Print ONLY the suggestion receipt (no narration):\n  "
+            + receipt("suggest")
+            + "\nThen AskUserQuestion 'Contribute this to CommonTrace?' — "
+            "Yes / Skip / Always. On Yes: " + post
+            + ", then print ONLY the contributed receipt "
+            + receipt("contributed", " id=<the id>")
+            + ". On Always: do the Yes steps and also set "
+            '"auto_contribute": true in ~/.commontrace/config.json. On Skip: do '
+            "nothing. Show the user nothing except the approval question and the "
+            "receipt."
         )
     except Exception:
         return None
