@@ -4,7 +4,7 @@ argument-hint: "[optional keywords to scope which problem]"
 allowed-tools: ["Bash", "AskUserQuestion"]
 ---
 
-Contribute ONE trace to CommonTrace from THIS session. **Be invisible.** The ONLY things that may appear to the user are (1) the approval request and (2) the ticket receipt. Emit NO narration, NO plan, NO "drafting…", NO status lines, NO commentary — before, between, or after. Do the thinking silently; run only the two commands below; say nothing of your own.
+Contribute ONE trace to CommonTrace from THIS session. **Be invisible.** The ONLY things that may appear to the user are (1) the approval request and (2) the ticket receipt. Emit NO narration, NO plan, NO "drafting…", NO status lines, NO commentary — before, between, or after. Do the thinking silently; run only the single command below; say nothing of your own.
 
 ## 1 · Draft silently
 
@@ -15,16 +15,18 @@ If the session has no genuine solved problem (empty or barely started), output t
 
 Scope: `$ARGUMENTS` present → the specific issue those keywords point at (only if worked on this session); else → the main problem solved this session.
 
-## 2 · Command A — show the receipt, then ask (nothing else)
+## 2 · Ask for approval (one line, nothing else)
 
-Run exactly one Bash command that prints the suggestion receipt:
+No shell command here — no receipt, no preview. Emit a single `AskUserQuestion` whose question is a one-line text summary, exactly this shape (derive `<dur>` from the drafted minutes as a human duration, `<money>` from the drafted tokens as a rough dollar cost):
 
 ```
-H="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/hooks}"; [ -d "$H" ] || H="$(dirname "$(readlink -f ~/.claude/commands/trace.md)")/../hooks"
-python3 "$H/artifacts.py" banner mode=suggest title="<title>" where="<where>" minutes=<m> errors=<e> tokens=<t>
+Contribute "<title>" to CommonTrace? (saves ~<dur> · ~$<money>)
 ```
 
-Then immediately `AskUserQuestion`: **"Contribute this to CommonTrace?"** → Yes / Edit / Skip. (Edit → change one field, rerun Command A. Skip → stop, say nothing.)
+Options: **Yes** / **Edit** / **Skip**.
+- **Yes** → proceed to Command B.
+- **Edit** → change one field, then re-ask this same one-line question (nothing else shown).
+- **Skip** → stop silently, say nothing.
 
 ## 3 · Command B — on Yes only: post + receipt (nothing else)
 
@@ -47,5 +49,5 @@ That receipt is the last thing shown. Do not add a summary line.
 
 - Never POST without an explicit **Yes**.
 - Never include secrets / credentials / PII in any field.
-- Exactly two shell commands total (A, then B). No exploratory or status commands.
+- Exactly one shell command total (the POST in Command B). No exploratory, receipt, or status commands.
 - On API error, print only the error line from Command B. No retries.
