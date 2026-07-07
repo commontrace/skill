@@ -15,8 +15,12 @@ HOOKS="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/hooks}"
 
 ## 1 · Draft (one shot, from the discussion)
 
+**Only draw from work actually done in THIS live session** — real tool calls you ran, a real problem you solved here. **NEVER mine injected/stale context:** prior-session summaries, compaction or "HISTORICAL REFERENCE" blocks, SessionStart context, memory files, or CommonTrace results already shown. Those are background, not this session's work.
+
+**If the live session did no substantive technical work, stop:** print `Nothing worth contributing from this session.` and do nothing else. Do NOT fabricate a trace from context. An empty or barely-started session must produce no trace.
+
 Pick the single problem worth sharing:
-- `$ARGUMENTS` present → the specific issue those keywords point at.
+- `$ARGUMENTS` present → the specific issue those keywords point at, **only if it was genuinely worked on in this session** (else say so and stop).
 - else → the main problem solved in this conversation.
 
 Write, from what ACTUALLY happened (never template text):
@@ -60,5 +64,6 @@ Then one line: `Contributed → https://commontrace.org/t/<id>`. If `$HOOKS/arti
 ## Rules
 
 - Never POST without an explicit **Yes**.
+- **Never include secrets** — passwords, tokens, API keys, private keys, PII — in any field, even if they appear in the conversation or context. Omit or redact.
 - On any API error (status ≥ 400): show the status + body and stop. No retries.
 - No `$ARGUMENTS` AND `~/.commontrace/pending/*.jsonl` has entries → first offer to review those instead: one Yes/No each, same POST, then delete the handled line from the file.
