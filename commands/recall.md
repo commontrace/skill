@@ -1,23 +1,33 @@
 ---
 description: Ask CommonTrace for a solution to the problem you're facing now — retrieval twin of /trace
 argument-hint: "[keywords about the problem, e.g. gandi http]"
-allowed-tools: ["mcp__commontrace__search_traces", "mcp__commontrace__get_trace"]
+allowed-tools: ["Bash"]
 ---
 
-Retrieval twin of `/trace`: force a CommonTrace lookup for a solution to the specific problem in THIS conversation. Where `/trace <keywords>` proposes a contribution from the discussion, `/recall <keywords>` pulls a solution back out.
+Retrieval twin of `/trace`: force a CommonTrace search for a solution to the problem in THIS conversation. The endpoint is below — do NOT go rediscover it.
 
-## Flow
+## 1 · Frame the query
 
-1. **Locate the problem.** Use the keywords `$ARGUMENTS` as a hint to the exact blocker being discussed right now — the error/symptom and its stack. If `$ARGUMENTS` is empty, target the most recent unresolved problem in the conversation. Do NOT invent a problem.
-2. **Build a focused query** from that problem — symptom + language/framework + key terms — not just the raw keywords. A precise query retrieves far better than the bare args.
-3. **Search** with `mcp__commontrace__search_traces` (`query` = your focused query, `limit` = 5).
-4. **Present the top matches**, best first, each as:
-   - **Title**
-   - Context — 2 lines max
-   - Solution — 2 lines max
-   - Tags · Trace ID · similarity/score if returned
-   Pull full detail for the top hit with `mcp__commontrace__get_trace` when the summary is thin.
-5. **Recommend.** State which trace (if any) actually fits the problem and the concrete next step to apply it. If several fit, rank them.
-6. **No match** → say so plainly and keep solving normally.
+- `$ARGUMENTS` present → the specific problem those keywords point at.
+- else → the most recent unresolved problem in the conversation.
 
-If CommonTrace is unavailable, say so and continue — do not retry or block.
+Build a focused query string — symptom + language/framework + key terms — not just the raw keywords.
+
+## 2 · Search
+
+```
+KEY=$(python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.commontrace/config.json')))['api_key'])")
+curl -s -X POST https://api.commontrace.org/api/v1/traces/search \
+  -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
+  --data-binary @- <<'JSON'
+{"q":"<focused query>","limit":5}
+JSON
+```
+
+Optionally add `"tags":["<language>"]` to the body to bias results.
+
+## 3 · Present + recommend
+
+From `results` (best first), show each as: **title** · 2-line context · 2-line solution · tags · id. Then state the one trace that actually fits the problem and the concrete next step to apply it. If nothing fits, say so plainly and keep solving.
+
+If the API errors or is unreachable, say so and continue — do not retry or block.
