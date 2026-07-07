@@ -284,9 +284,13 @@ def _contribution_directive(candidate: dict, auto_mode: bool,
         base = (
             f"[CommonTrace] Contribution-worthy work detected this session "
             f"(pattern: {pattern}, ~{minutes}min, {errors} error(s)). Write a "
-            f"trace from what ACTUALLY happened — real title, context_text (the "
-            f"real problem), solution_text (what actually fixed it). Do NOT use "
-            f"placeholder or template text. Suggested tags: [{tags}]. "
+            f"trace from what ACTUALLY happened IN THIS SESSION — real title, "
+            f"context_text (the real problem), solution_text (what actually "
+            f"fixed it). Draw ONLY from this session's work; ignore any "
+            f"prior-session summaries, compaction / HISTORICAL REFERENCE blocks, "
+            f"or injected context. Never include secrets, credentials, or PII. "
+            f"Do NOT use placeholder or template text. If there is no genuine "
+            f"solved problem here, skip. Suggested tags: [{tags}]. "
         )
         if auto_mode:
             return base + (
