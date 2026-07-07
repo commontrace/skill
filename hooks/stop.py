@@ -242,6 +242,75 @@ def _contribution_banner(candidate: dict, trace_id: str = "") -> str | None:
         return None
 
 
+def _contribution_directive(candidate: dict, auto_mode: bool,
+                            hooks_dir: str) -> str | None:
+    """Instruction handed to the agent via a Stop `decision: block`, so the
+    agent writes REAL trace content instead of the hook silently POSTing the
+    mechanical journey template (a husk — the jam that stalled auto-contribute
+    since the husk guard landed). No LLM in the hook: the hook only triggers,
+    the agent authors. auto_mode → contribute without asking; else → show the
+    suggestion receipt and ask. Returns None on any failure (caller falls back
+    to the durable pending queue so nothing is lost).
+    """
+    try:
+        meta = candidate.get("metadata_json") or {}
+        title = candidate.get("title", "contribution")
+        pattern = candidate.get("top_pattern", "") or ""
+        tags = ", ".join(candidate.get("suggested_tags") or [])
+        minutes = int(round(meta.get("time_to_resolution_minutes", 0) or 0))
+        errors = int(meta.get("error_count", 0) or 0)
+        tokens = int(meta.get("tokens_to_resolution", 0) or 0)
+        meta_json = json.dumps(meta, ensure_ascii=False)
+
+        ev = candidate.get("evidence") or {}
+        where = ""
+        for key in ("config_files", "files", "fix_files",
+                    "security_files", "infra_files"):
+            val = ev.get(key)
+            if isinstance(val, list) and val:
+                where = Path(val[0]).name
+                break
+            if isinstance(val, str) and val:
+                where = Path(val).name
+                break
+        where = where or pattern.replace("_", " ")
+
+        def receipt(mode, id_suffix=""):
+            return (f'python3 "{hooks_dir}/artifacts.py" banner mode={mode} '
+                    f'title="{title}" where="{where}" '
+                    f'minutes={minutes} errors={errors} '
+                    f'tokens={tokens}{id_suffix}')
+
+        base = (
+            f"[CommonTrace] Contribution-worthy work detected this session "
+            f"(pattern: {pattern}, ~{minutes}min, {errors} error(s)). Write a "
+            f"trace from what ACTUALLY happened — real title, context_text (the "
+            f"real problem), solution_text (what actually fixed it). Do NOT use "
+            f"placeholder or template text. Suggested tags: [{tags}]. "
+        )
+        if auto_mode:
+            return base + (
+                "Auto-contribute is ON — contribute now without asking: call "
+                f"contribute_trace with metadata_json={meta_json}, then print "
+                "this receipt verbatim:\n  "
+                f"{receipt('contributed', ' id=<new-trace-id>')}\n"
+                "Keep it to a few lines. If the work truly isn't worth sharing, "
+                "skip silently."
+            )
+        return base + (
+            "First print the suggestion receipt verbatim:\n  "
+            f"{receipt('suggest')}\n"
+            "Then ask with AskUserQuestion 'Contribute this to CommonTrace?' — "
+            "options Yes / Skip / Always. On Yes: call contribute_trace with "
+            f"metadata_json={meta_json}, then print "
+            f"{receipt('contributed', ' id=<new-trace-id>')}. On Always: do the "
+            "Yes steps and also set \"auto_contribute\": true in "
+            "~/.commontrace/config.json. On Skip: do nothing."
+        )
+    except Exception:
+        return None
+
+
 def _build_title(top_pattern: str, evidence: dict, ctx_fp: dict | None) -> str:
     """Generate a short trace title from structural signals — no LLM."""
     lang = (ctx_fp or {}).get("language", "") if ctx_fp else ""
@@ -1198,29 +1267,23 @@ def main() -> None:
 
     mark_prompted(session_key, "score")
     candidate = _build_candidate(score, top_pattern, top_evidence, state_dir, transcript_path=data.get("transcript_path", ""))
+    _struggle_artifact(candidate, state_dir)
 
-    # Husk guard: never silently publish empty / templated / noise-tainted
-    # candidates. Those route to the manual-review pending file below instead
-    # (the 49-husk root cause was auto_mode POSTing the bare journey template).
-    if auto_mode and not _is_husk(candidate):
-        trace_id = _auto_submit(candidate)
-        if trace_id:
-            _append_auto_log({
-                "trace_id": trace_id,
-                "session_id": data.get("session_id", ""),
-                "cwd": data.get("cwd", ""),
-                "title": candidate.get("title", ""),
-                "score": candidate.get("score", 0),
-                "top_pattern": candidate.get("top_pattern", ""),
-                "tags": candidate.get("suggested_tags", []),
-            })
-            _struggle_artifact(candidate, state_dir, trace_id)
-            banner = _contribution_banner(candidate, trace_id)
-            if banner:
-                print(json.dumps({"systemMessage": banner}))
-            return
-        # API failure: fall through to pending so nothing is lost
+    # Hand the candidate to the agent to author REAL content. The hook can only
+    # synthesize the mechanical journey template (a husk) — no LLM in hooks — so
+    # rather than silently POST that husk (the jam that stalled auto-contribute),
+    # block the Stop and let the agent contribute (auto) or prompt (manual) with
+    # real content. This is what makes a contribution visible even in full-auto.
+    # `stop_hook_active` + the `already_prompted` marker keep it to one fire per
+    # session.
+    directive = _contribution_directive(
+        candidate, auto_mode, str(Path(__file__).parent))
+    if directive:
+        print(json.dumps({"decision": "block", "reason": directive}))
+        return
 
+    # Fallback (directive build failed): keep the durable pending record so
+    # nothing is lost and /trace can still surface it.
     line = _struggle_artifact(candidate, state_dir)
     _write_pending(session_key, {
         "kind": "score",
