@@ -1,55 +1,52 @@
 ---
-description: Contribute the current work to CommonTrace — approval + receipt only; everything else runs in a hidden background subagent
+description: Contribute the current work to CommonTrace — instant handoff, all work in a background subagent
 argument-hint: "[optional keywords to scope which problem]"
-allowed-tools: ["Read", "AskUserQuestion", "Task"]
+allowed-tools: ["Task", "AskUserQuestion"]
 ---
 
-Contribute ONE trace from THIS session with MINIMAL footprint. The user must see ONLY: (1) the approval prompt (skipped when auto-contribute is already on) and (2) the final receipt. Everything else — the API call, the render, any shell — runs INSIDE a background subagent and must stay hidden. Do NOT run Bash yourself. Do NOT narrate.
+**INSTANT HANDOFF. Do not think about this.**
 
-## 1 · Draft silently (main thread)
+Your ONLY action in the main thread: immediately spawn ONE subagent with the `Task` tool using `run_in_background: true` and `model: sonnet`, passing the task block below verbatim (substituting `$ARGUMENTS` where noted). Then print the single line `Contributing in the background…` and stop.
 
-From work actually done in THIS live session only — real tool calls, a real problem solved here. NEVER mine prior-session summaries, compaction / "HISTORICAL REFERENCE" blocks, SessionStart context, memory, or already-shown results. Never include secrets / credentials / PII.
+Do NOT draft. Do NOT read any file. Do NOT run Bash. Do NOT inspect the session. Do NOT narrate. Any of that costs the user seconds and is forbidden — the subagent does all of it.
 
-If the session has no genuine solved problem (empty or barely started), output the single line `Nothing to contribute.` and stop. Otherwise prepare silently, holding these in your head (do not print them):
-`title`, `where` (key file/service), `context_text`, `solution_text`, `tags[]`, and rough `minutes` / `errors` / `tokens` (tokens ≈ `minutes*20000` if unknown). Also a `<dur>` (human duration from minutes) and `<money>` (rough $ from tokens, tokens/1e6*5).
+When the subagent finishes:
+- If it returns a receipt → print the receipt verbatim, nothing else.
+- If it returns `NEEDS_APPROVAL` → show exactly one `AskUserQuestion` with its one-line summary, options **Yes** / **Always** / **Edit** / **Skip**. On Yes/Always, spawn a second background subagent told to post the pending draft at `~/.commontrace/pending/trace-draft.json` (and, for Always, first set `auto_contribute: true` in `~/.commontrace/config.json`), then print its receipt. On Skip, delete that file and say nothing.
 
-Scope: `$ARGUMENTS` present → the specific issue those keywords point at (only if worked on this session); else → the main problem solved this session.
+---
 
-## 2 · Approval (main thread) — unless already on "Always"
+## Subagent task (pass verbatim)
 
-`Read` the file `~/.commontrace/config.json`. If its `auto_contribute` is `true` → skip this step entirely and go to 3 (no prompt).
+Contribute one trace to CommonTrace. Work silently; return only what step 6 specifies.
 
-Otherwise emit exactly one `AskUserQuestion`, question = the one-line summary:
+1. **Find this session's work.** The structural record is the most-recently-modified directory under `~/.commontrace/sessions/` — read its `errors.jsonl`, `changes.jsonl`, `resolutions.jsonl`, `candidates.jsonl`. For real prose, also tail the newest `*.jsonl` transcript under `~/.claude/projects/*/` (read only the last ~200 lines; never load the whole file).
 
-```
-Contribute "<title>" to CommonTrace? (saves ~<dur> · ~$<money>)
-```
+2. **Draft** from work actually done in THIS session only. Never use prior-session summaries, compaction / "HISTORICAL REFERENCE" blocks, or memory files. Never include secrets / credentials / PII. If there is no genuine solved problem, return exactly `Nothing to contribute.` and stop.
+   Produce: `title`, `where` (key file/service), `context_text` (the real problem), `solution_text` (what actually fixed it), `tags[]`, and rough `minutes` / `errors` / `tokens` (tokens ≈ minutes*20000 if unknown).
+   Scope hint (may be empty): `$ARGUMENTS` — if present, trace that specific issue, only if it was genuinely worked on this session.
 
-Options: **Yes** / **Always** / **Edit** / **Skip**.
-- **Yes** → go to 3.
-- **Always** → go to 3, and include the "set the always flag" instruction in the subagent task.
-- **Edit** → change one field, re-ask this same one-line question (nothing else shown).
-- **Skip** → stop, say nothing.
+3. **Check the flag:** `python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.commontrace/config.json'))).get('auto_contribute') is True)"`
+   - If `False` → write the draft as JSON to `~/.commontrace/pending/trace-draft.json` and return exactly:
+     `NEEDS_APPROVAL: Contribute "<title>" to CommonTrace? (saves ~<dur> · ~$<money>)`
+     (`<dur>` = human duration from minutes; `<money>` = tokens/1e6*5). Then stop.
+   - If `True` → continue.
 
-## 3 · Hand off to a background subagent (hidden, non-blocking)
+4. **Post it.**
+   `H="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/hooks}"; [ -d "$H" ] || H="$(dirname "$(readlink -f ~/.claude/commands/trace.md)")/../hooks"`
+   `KEY=$(python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.commontrace/config.json')))['api_key'])")`
+   Build the JSON body in python (avoid shell escaping) and `curl -s -X POST https://api.commontrace.org/api/v1/traces -H "X-API-Key: $KEY" -H "Content-Type: application/json"` with body
+   `{"title":…,"context_text":…,"solution_text":…,"tags":[…],"metadata_json":{"detection_pattern":"user_directed","time_to_resolution_minutes":<m>,"error_count":<e>,"tokens_to_resolution":<t>}}`. Parse the `id`.
 
-Spawn ONE subagent with the `Task` tool, **run_in_background: true**, so the user is not blocked and the shell stays hidden. Give it this task (fill in the drafted values; keep it self-contained):
+5. **Render the receipt:**
+   `python3 "$H/artifacts.py" banner mode=contributed title="<title>" where="<where>" minutes=<m> errors=<e> tokens=<t> id="$ID"`
 
-> Contribute a trace to CommonTrace, then render its receipt. Steps, silently:
-> 1. `H="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/hooks}"; [ -d "$H" ] || H="$(dirname "$(readlink -f ~/.claude/commands/trace.md)")/../hooks"`
-> 2. `KEY=$(python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.commontrace/config.json')))['api_key'])")`
-> 3. POST to `https://api.commontrace.org/api/v1/traces` with header `X-API-Key: $KEY`, JSON body `{"title":"<title>","context_text":"<context>","solution_text":"<solution>","tags":[<tags>],"metadata_json":{"detection_pattern":"user_directed","time_to_resolution_minutes":<m>,"error_count":<e>,"tokens_to_resolution":<t>}}`. Parse the `id`.
-> 4. If it was an "Always" contribution, also set the flag: `python3 -c "import json,os;p=os.path.expanduser('~/.commontrace/config.json');d=json.load(open(p));d['auto_contribute']=True;json.dump(d,open(p,'w'),indent=2)"`
-> 5. Render the receipt: `python3 "$H/artifacts.py" banner mode=contributed title="<title>" where="<where>" minutes=<m> errors=<e> tokens=<t> id="$ID"`
-> 6. Return ONLY the rendered receipt, then a final line `→ https://commontrace.org/t/<id>`. On any API error (no id), return only `CommonTrace error: <response body>`.
+6. **Return ONLY** the rendered receipt exactly as printed, then a final line `→ https://commontrace.org/t/<id>`. If the POST returns no id, return only `CommonTrace error: <response body>`. No commentary, no summary.
 
-## 4 · Show the receipt (main thread)
-
-When the subagent finishes, print its returned receipt verbatim — nothing else. No summary line, no narration.
+---
 
 ## Rules
 
-- Never contribute without an explicit **Yes** / **Always** — unless `auto_contribute` is already `true`.
-- **Always** persists `auto_contribute: true` (done inside the subagent), so future `/trace` and the Stop-hook auto path skip the prompt. Undo by setting it back to `false`.
-- Never include secrets / credentials / PII in any field.
-- The main thread runs NO Bash — only Read, AskUserQuestion, and the background Task. All shell lives in the subagent.
+- The main thread does no drafting, no file reads, no Bash — only the Task spawn (and the approval prompt if asked for).
+- Never contribute without `Yes` / `Always`, unless `auto_contribute` is already `true`.
+- Never include secrets / credentials / PII.
