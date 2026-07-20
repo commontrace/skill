@@ -35,8 +35,9 @@ Contribute one trace to CommonTrace. Work silently; return only what step 6 spec
 4. **Post it.**
    `H="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/hooks}"; [ -d "$H" ] || H="$(dirname "$(readlink -f ~/.claude/commands/trace.md)")/../hooks"`
    `KEY=$(python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.commontrace/config.json')))['api_key'])")`
+   Compute `error_signature` for the JSON body: look at the most recent `errors.jsonl` entry. If it has a `canonical_signature` field, use it. If not, but it has `output_tail`, compute it with `python3 - "$H/session_state.py" "$OUTPUT_TAIL"` and import `canonical_signature`. If there is no error, omit `error_signature`.
    Build the JSON body in python (avoid shell escaping) and `curl -s -X POST https://api.commontrace.org/api/v1/traces -H "X-API-Key: $KEY" -H "Content-Type: application/json"` with body
-   `{"title":…,"context_text":…,"solution_text":…,"tags":[…],"metadata_json":{"detection_pattern":"user_directed","time_to_resolution_minutes":<m>,"error_count":<e>,"tokens_to_resolution":<t>}}`. Parse the `id`.
+   `{"title":…,"context_text":…,"solution_text":…,"tags":[…],"error_signature":"<sig-or-omit>","metadata_json":{"detection_pattern":"user_directed","time_to_resolution_minutes":<m>,"error_count":<e>,"tokens_to_resolution":<t>}}`. Parse the `id`.
 
 5. **Render the receipt:**
    `python3 "$H/artifacts.py" banner mode=contributed title="<title>" where="<where>" minutes=<m> errors=<e> tokens=<t> id="$ID"`
