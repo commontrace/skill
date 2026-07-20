@@ -29,7 +29,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from session_state import (
     get_state_dir, append_event, read_events, is_config_file,
-    error_signature, error_hash,
+    error_signature, error_hash, canonical_signature,
 )
 from redact import redact_text, redact_command, is_sensitive_file, strip_harness_noise
 
@@ -183,13 +183,76 @@ def _get_adaptive_cooldown(trigger_name: str, base_seconds: int,
     return base_seconds
 
 
-def search_commontrace(query: str, api_key: str,
-                       context: dict | None = None) -> list[dict]:
+def report_trace_applied(trace_id: str, api_key: str) -> bool:
+    """Report that a trace successfully resolved an error.
+
+    Calls POST /api/v1/traces/{id}/apply. Failures are swallowed so the
+    agent's session is never blocked by telemetry.
+    """
     import urllib.error
     import urllib.request
 
     base_url = os.environ.get("COMMONTRACE_API_BASE_URL", API_BASE).rstrip("/")
-    body: dict = {"q": query, "limit": 3}
+    req = urllib.request.Request(
+        f"{base_url}/api/v1/traces/{trace_id}/apply",
+        data=b"",
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "X-API-Key": api_key,
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=3):
+            return True
+    except (urllib.error.URLError, urllib.error.HTTPError,
+            json.JSONDecodeError, OSError):
+        return False
+
+
+def search_commontrace(api_key: str, query: str = "",
+                       error_signature: str = "",
+                       context: dict | None = None,
+                       limit: int = 3) -> list[dict]:
+    import urllib.error
+    import urllib.request
+
+    base_url = os.environ.get("COMMONTRACE_API_BASE_URL", API_BASE).rstrip("/")
+
+    # 1. Try canonical error-signature lookup first (highest precision, no LLM).
+    if error_signature:
+        sig_body: dict = {
+            "q": None,
+            "error_signature": error_signature,
+            "limit": 1,
+        }
+        if context:
+            sig_body["context"] = context
+        sig_payload = json.dumps(sig_body, separators=(",", ":")).encode("utf-8")
+        sig_req = urllib.request.Request(
+            f"{base_url}/api/v1/traces/search",
+            data=sig_payload,
+            method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "X-API-Key": api_key,
+            },
+        )
+        try:
+            with urllib.request.urlopen(sig_req, timeout=3) as response:
+                sig_data = json.loads(response.read())
+                sig_results = sig_data.get("results", [])
+                if sig_results:
+                    return sig_results
+        except (urllib.error.URLError, urllib.error.HTTPError,
+                json.JSONDecodeError, OSError):
+            pass
+
+    # 2. Fall back to natural-language semantic search.
+    if not query:
+        return []
+
+    body: dict = {"q": query, "limit": limit}
     if context:
         body["context"] = context
     payload = json.dumps(body).encode("utf-8")
@@ -293,14 +356,17 @@ def handle_bash(data: dict, state_dir: Path) -> dict | None:
         # M19/M20: Redact secrets before storing or sending
         safe_command = redact_command(command[:200])
         safe_error = redact_text(error_text[:500])
+        redacted_error = redact_text(error_text)
         # M19: signature computed from REDACTED text — it is stored in local.db
-        sig = error_signature(redact_text(error_text))
+        sig = error_signature(redacted_error)
+        canon_sig = canonical_signature(redacted_error)
 
         append_event(state_dir, "errors.jsonl", {
             "source": "bash",
             "command": safe_command,
             "output_tail": safe_error,
             "sig": sig,
+            "canonical_signature": canon_sig,
         })
 
         # Error recurrence: record this occurrence and, if this project has
@@ -309,8 +375,8 @@ def handle_bash(data: dict, state_dir: Path) -> dict | None:
         if recurrence_output:
             return recurrence_output
 
-        # Search CommonTrace with raw error output (let search engine
-        # handle relevance — no keyword extraction needed)
+        # Search CommonTrace: try canonical signature first, then fall back
+        # to a redacted tail of the error text.
         if not is_on_cooldown("bash_error",
                               _get_adaptive_cooldown("bash_error", 30, state_dir)):
             api_key = load_api_key()
@@ -318,22 +384,33 @@ def handle_bash(data: dict, state_dir: Path) -> dict | None:
                 set_cooldown("bash_error")
                 _record_trigger_safe(state_dir, "bash_error")
                 # M19: Redact before sending error text as search query
-                query = redact_text(error_text.strip()[-200:])
-                if query:
-                    results = search_commontrace(query, api_key)
-                    if results:
-                        formatted = format_results(results)
-                        return {
-                            "hookSpecificOutput": {
-                                "hookEventName": "PostToolUse",
-                                "additionalContext": (
-                                    f"CommonTrace found relevant traces "
-                                    f"for this error:\n\n{formatted}\n\n"
-                                    f"Use get_trace with the ID to read "
-                                    f"the full solution."
-                                ),
-                            }
+                query = safe_error.strip()[-200:] if safe_error else ""
+                context = _read_context_fingerprint(state_dir)
+                results = search_commontrace(
+                    api_key,
+                    query=query,
+                    error_signature=canon_sig,
+                    context=context,
+                    limit=3,
+                )
+                if results:
+                    try:
+                        (state_dir / "last_search_trace_id").write_text(
+                            results[0].get("id", ""), encoding="utf-8")
+                    except OSError:
+                        pass
+                    formatted = format_results(results)
+                    return {
+                        "hookSpecificOutput": {
+                            "hookEventName": "PostToolUse",
+                            "additionalContext": (
+                                f"CommonTrace found relevant traces "
+                                f"for this error:\n\n{formatted}\n\n"
+                                f"Use get_trace with the ID to read "
+                                f"the full solution."
+                            ),
                         }
+                    }
     else:
         # ── Success: check if this resolves a previous error ──
         previous_errors = read_events(state_dir, "errors.jsonl")
@@ -501,6 +578,14 @@ def _pair_resolution(state_dir: Path, command: str,
         except Exception:
             trace_id = None
 
+        # Fallback: a successful search result led to the fix even without get_trace
+        if trace_id is None:
+            try:
+                trace_id = (state_dir / "last_search_trace_id").read_text(
+                    encoding="utf-8").strip() or None
+            except OSError:
+                trace_id = None
+
         record_resolution(conn, project_id, match["sig"],
                           fix_command=redact_command(command[:200]),
                           fix_files=fix_files[:10],
@@ -512,6 +597,16 @@ def _pair_resolution(state_dir: Path, command: str,
         if match["sig"] in injected:
             record_trace_consumed(conn, state_dir.name,
                                   "local:" + error_hash(match["sig"]))
+
+        # Report outcome to the API for traces that came from the commons.
+        # Local markers and empty trace_ids are never sent.
+        if trace_id and not str(trace_id).startswith("local:"):
+            try:
+                api_key = load_api_key()
+                if api_key:
+                    report_trace_applied(str(trace_id), api_key)
+            except Exception:
+                pass
 
         # Disclosure trailer: only for commons traces, never local markers
         trailer_output = None
@@ -675,7 +770,13 @@ def _check_domain_entry(file_path: str, state_dir: Path) -> dict | None:
             api_key = load_api_key()
             if api_key:
                 query = f"{lang} common patterns and gotchas"
-                results = search_commontrace(query, api_key)
+                context = _read_context_fingerprint(state_dir)
+                results = search_commontrace(
+                    api_key,
+                    query=query,
+                    context=context,
+                    limit=3,
+                )
                 if results:
                     formatted = format_results(results)
                     return {
@@ -980,7 +1081,13 @@ def _check_pre_code(file_path: str, tool_name: str,
     if api_key:
         name = Path(file_path).stem.lower()
         query = f"{lang} {name} implementation patterns"
-        results = search_commontrace(query, api_key)
+        context = _read_context_fingerprint(state_dir)
+        results = search_commontrace(
+            api_key,
+            query=query,
+            context=context,
+            limit=3,
+        )
         if results:
             formatted = format_results(results)
             return {

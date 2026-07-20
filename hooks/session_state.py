@@ -145,6 +145,49 @@ def error_signature(text: str) -> str:
     return sig
 
 
+def canonical_signature(text: str, max_msg_words: int = 6) -> str:
+    """Return a compact dotted canonical signature for backend lookup.
+
+    Tries to extract a Python/Node-style exception line:
+      module.ClassName: message text
+    and turns it into a lowercase dotted slug like:
+      sqlalchemy.exc.missinggreenlet.greenlet.spawn.has.not.been.called
+
+    Falls back to slugifying the fuzzy error_signature() output.
+    """
+    # Strip variable parts (paths, line numbers, hex, UUIDs, timestamps).
+    sig = error_signature(text[:500])
+
+    # Drop common location phrases ("at /path/to/file.js:12", "in (x, y)")
+    # before token extraction so location noise does not enter the signature.
+    sig = re.sub(r'\bat\s+\S+', '', sig, flags=re.IGNORECASE)
+    sig = re.sub(r'\bin\s+\([^)]*\)', '', sig, flags=re.IGNORECASE)
+
+    # Find the last exception line: optional module.Class followed by ':'.
+    pattern = re.compile(
+        r'(?:([a-zA-Z_][\w.]*)\.)?'
+        r'([A-Z][A-Za-z0-9_]*)'
+        r'\s*:\s*([^\n]+)'
+    )
+    matches = list(pattern.finditer(sig))
+
+    def _words(part: str) -> list[str]:
+        return [w for w in re.split(r'[^a-z0-9]+', part.lower())
+                if len(w) > 1 and not w.isdigit()]
+
+    if matches:
+        m = matches[-1]
+        module_part = (m.group(1) or "").lower().strip(".")
+        class_part = m.group(2).lower()
+        msg = m.group(3)
+        parts = _words(module_part) + _words(class_part)
+        parts.extend(_words(msg)[:max_msg_words])
+        return ".".join(parts)[:500]
+
+    # Fallback: slugify the whole normalized signature.
+    return ".".join(_words(sig))[:500]
+
+
 def is_config_file(file_path: str) -> bool:
     """Check if a file path looks like a configuration file."""
     p = Path(file_path)
