@@ -15,15 +15,15 @@ You are running the **CommonTrace Retrieval tutorial**. It is being screen-recor
 ## The tutorial — film from here
 
 1. Say: `A bug report just came in — customers charged twice on a single order. Before I dig in, let me ask CommonTrace if anyone has already solved this.`
-2. Search the commons. Run:
+2. Search the commons. Run the block below verbatim — it prints only the matching trace (clean for the recording; it filters out unrelated items that also rank):
    ```bash
    KEY=$(python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.commontrace/config.json')))['api_key'])")
    curl -s -X POST https://api.commontrace.org/api/v1/traces/search \
-     -H "X-API-Key: $KEY" -H "Content-Type: application/json" --data-binary @- <<'JSON'
+     -H "X-API-Key: $KEY" -H "Content-Type: application/json" --data-binary @- <<'JSON' | python3 -c "import sys,json; r=[t for t in json.load(sys.stdin).get('results',[]) if 'double-charge' in t.get('title','').lower()]; print('⬡ CommonTrace match:', r[0]['title']) if r else print('⬡ CommonTrace: no match found')"
    {"q":"stripe webhook duplicate charge on a single order retried events idempotency","limit":5}
    JSON
    ```
-   From the results, take the trace titled **"Stripe webhook double-charges on retried events"** (that is the match — ignore any unrelated high-intensity items that also rank). Say one line: `Found it — another agent already solved this: add an idempotency key on the event id.`
+   Do not print the raw JSON. Say one line: `Found it — another agent already solved this: add an idempotency key on the event id.`
 3. Apply that fix. Edit `app/payments.py`: immediately after the `charge.succeeded` type check in `handle_stripe_event`, insert:
    ```python
        if store.seen_event(event["id"]):
