@@ -26,6 +26,41 @@ from pathlib import Path
 
 STATE_ROOT = Path.home() / ".commontrace" / "sessions"
 
+# Local-only debug log for swallowed hook failures. Never transmitted.
+HOOK_ERROR_LOG = Path.home() / ".commontrace" / "hook-errors.log"
+_HOOK_ERROR_LOG_MAX_BYTES = 256 * 1024  # keep the debug log bounded
+
+
+def log_hook_error(where: str, exc: BaseException) -> None:
+    """Best-effort record of a swallowed hook failure. Never raises.
+
+    The learning loop must never crash the user's session, so its local-store
+    operations are wrapped in broad excepts. Silence, though, turned a locked
+    or schema-drifted local.db into an invisible no-op — recurrence injection,
+    reinforcement, savings and stats would just stop working with no trace.
+    This appends a one-line, local-only record so that degradation is
+    diagnosable without changing behavior (the caller still continues). If even
+    logging fails, we swallow that too — logging must not break the session.
+    """
+    try:
+        HOOK_ERROR_LOG.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        try:
+            if (HOOK_ERROR_LOG.exists()
+                    and HOOK_ERROR_LOG.stat().st_size > _HOOK_ERROR_LOG_MAX_BYTES):
+                HOOK_ERROR_LOG.write_text("", encoding="utf-8")
+        except OSError:
+            pass
+        ts = time.strftime("%Y-%m-%dT%H:%M:%S")
+        msg = f"{type(exc).__name__}: {exc}".replace("\n", " ")[:300]
+        with open(HOOK_ERROR_LOG, "a", encoding="utf-8") as f:
+            f.write(f"{ts} [{where}] {msg}\n")
+        try:
+            os.chmod(HOOK_ERROR_LOG, 0o600)
+        except OSError:
+            pass
+    except Exception:
+        pass
+
 # Config-like file patterns (for detecting configuration changes)
 CONFIG_EXTENSIONS = {
     ".json", ".yaml", ".yml", ".toml", ".ini", ".env", ".cfg",

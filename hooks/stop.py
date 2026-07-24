@@ -41,7 +41,7 @@ from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from session_state import get_state_dir, read_events, read_counter
+from session_state import get_state_dir, read_events, read_counter, log_hook_error
 
 
 RESOLUTION_DIR = Path.home() / ".commontrace" / "resolutions"
@@ -532,8 +532,8 @@ def compute_importance(state_dir: Path, effectiveness: dict | None = None) -> tu
         ).fetchone()
         consumed_traces = row[0] if row else 0
         conn.close()
-    except Exception:
-        pass
+    except Exception as e:
+        log_hook_error("generation_effect_query", e)
 
     if errors and resolutions and not research and consumed_traces == 0:
         scores["generation_effect"] = 1.5
@@ -917,8 +917,8 @@ def _persist_session(data: dict, state_dir: Path) -> None:
         prune_stale_cache(conn)
 
         conn.close()
-    except Exception:
-        pass
+    except Exception as e:
+        log_hook_error("persist_session", e)
 
 
 def _book_savings(data: dict, state_dir: Path) -> None:
@@ -968,8 +968,8 @@ def _book_savings(data: dict, state_dir: Path) -> None:
             conn.commit()
         finally:
             conn.close()
-    except Exception:
-        pass
+    except Exception as e:
+        log_hook_error("book_savings", e)
 
 
 def _session_counters(conn, state_dir: Path, project_id) -> dict:
@@ -994,8 +994,8 @@ def _session_counters(conn, state_dir: Path, project_id) -> dict:
         if row:
             counters["searches_fired"] = int(row["fired"] or 0)
             counters["traces_consumed"] = int(row["consumed"] or 0)
-    except Exception:
-        pass
+    except Exception as e:
+        log_hook_error("session_counters_triggers", e)
     try:
         resolutions = read_events(state_dir, "resolutions.jsonl")
         counters["resolutions_total"] = len(resolutions)
@@ -1009,8 +1009,8 @@ def _session_counters(conn, state_dir: Path, project_id) -> dict:
             if row:
                 counters["resolutions_assisted"] = min(
                     int(row["n"] or 0), counters["resolutions_total"])
-    except Exception:
-        pass
+    except Exception as e:
+        log_hook_error("session_counters_resolutions", e)
     return counters
 
 
@@ -1074,8 +1074,8 @@ def _report_trigger_stats(data: dict, state_dir: Path) -> None:
             },
         )
         urllib.request.urlopen(req, timeout=2)
-    except Exception:
-        pass  # Best-effort, never block
+    except Exception as e:
+        log_hook_error("report_trigger_stats", e)
 
 
 def main() -> None:
@@ -1148,7 +1148,8 @@ def main() -> None:
                 effectiveness = get_trigger_effectiveness(conn, project_id)
             finally:
                 conn.close()
-    except Exception:
+    except Exception as e:
+        log_hook_error("reinforcement_effectiveness", e)
         effectiveness = None
     score, top_pattern, top_evidence = compute_importance(state_dir, effectiveness)
 

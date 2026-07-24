@@ -29,7 +29,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from session_state import (
     get_state_dir, append_event, read_events, is_config_file,
-    error_signature, error_hash,
+    error_signature, error_hash, log_hook_error,
 )
 from redact import redact_text, redact_command, is_sensitive_file, strip_harness_noise
 
@@ -406,8 +406,8 @@ def _record_trigger_safe(state_dir: Path, trigger_name: str) -> None:
         conn = _get_conn()
         record_trigger(conn, session_id, trigger_name)
         conn.close()
-    except Exception:
-        pass
+    except Exception as e:
+        log_hook_error("record_trigger", e)
 
 
 def _read_project_id(state_dir: Path) -> int | None:
@@ -519,7 +519,8 @@ def _pair_resolution(state_dir: Path, command: str,
             trailer_output = _suggest_trailer(state_dir, trace_id)
         conn.close()
         return trailer_output
-    except Exception:
+    except Exception as e:
+        log_hook_error("resolution_pairing", e)
         return None
 
 
@@ -603,7 +604,8 @@ def _check_error_recurrence(sig: str, state_dir: Path) -> dict | None:
         conn = _get_conn()
         info = record_error_signature(conn, project_id, sig)
         conn.close()
-    except Exception:
+    except Exception as e:
+        log_hook_error("error_recurrence", e)
         return None
 
     if not info or not info.get("recurrence") or not info.get("resolved"):
@@ -692,8 +694,8 @@ def _check_domain_entry(file_path: str, state_dir: Path) -> dict | None:
                             ),
                         }
                     }
-    except Exception:
-        pass
+    except Exception as e:
+        log_hook_error("domain_entry", e)
     return None
 
 
@@ -1048,8 +1050,8 @@ def handle_trace_consumption(data: dict, state_dir: Path) -> None:
                 cache_trace_pointer(conn, trace_id, project_id, title,
                                     source="search")
         conn.close()
-    except Exception:
-        pass
+    except Exception as e:
+        log_hook_error("trace_consumption_cache", e)
 
 
 def handle_search_results(data: dict, state_dir: Path) -> None:
@@ -1073,8 +1075,8 @@ def handle_search_results(data: dict, state_dir: Path) -> None:
                 cache_trace_pointer(conn, trace_id, project_id, title,
                                     source="search")
         conn.close()
-    except Exception:
-        pass
+    except Exception as e:
+        log_hook_error("search_results_cache", e)
 
 
 def handle_vote(data: dict, state_dir: Path) -> None:
@@ -1093,8 +1095,8 @@ def handle_vote(data: dict, state_dir: Path) -> None:
         conn = _get_conn()
         record_trace_vote_v2(conn, trace_id, vote_type)
         conn.close()
-    except Exception:
-        pass
+    except Exception as e:
+        log_hook_error("vote_record", e)
 
 
 def handle_contribution(data: dict, state_dir: Path) -> None:
@@ -1137,8 +1139,8 @@ def handle_contribution(data: dict, state_dir: Path) -> None:
                     cache_trace_pointer(conn, response_trace_id, project_id,
                                         title, source="contributed")
                     conn.close()
-        except Exception:
-            pass
+        except Exception as e:
+            log_hook_error("contribution_cache", e)
 
 
 def handle_amendment(data: dict, state_dir: Path) -> None:
