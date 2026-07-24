@@ -42,12 +42,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from session_state import get_state_dir, read_events, read_counter
-from redact import contains_harness_noise
 
 
 RESOLUTION_DIR = Path.home() / ".commontrace" / "resolutions"
 PENDING_DIR = Path.home() / ".commontrace" / "pending"
-AUTO_LOG = Path.home() / ".commontrace" / "auto-log.jsonl"
 CONFIG_FILE = Path.home() / ".commontrace" / "config.json"
 IMPORTANCE_THRESHOLD = 4.0
 MIN_TURNS = 2
@@ -88,104 +86,6 @@ def _write_pending(session_key: str, payload: dict) -> None:
         pass
 
 
-def _auto_submit(payload: dict) -> str | None:
-    """Submit candidate directly to API. Returns trace_id on success, else None.
-
-    Used in auto mode (auto_contribute=true). Best-effort — failures fall back
-    to writing a pending file so nothing is lost.
-    """
-    import urllib.request
-    import urllib.error
-    config = _read_config()
-    api_key = config.get("api_key") or os.environ.get("COMMONTRACE_API_KEY", "")
-    if not api_key:
-        return None
-    base_url = os.environ.get(
-        "COMMONTRACE_API_BASE_URL",
-        "https://api.commontrace.org").rstrip("/")
-
-    metadata = dict(payload.get("metadata_json") or {})
-    metadata["auto_contributed"] = True
-
-    body = {
-        "title": payload.get("title") or "auto-contributed trace",
-        "context_text": payload.get("suggested_context_text") or "(no context captured)",
-        "solution_text": payload.get("suggested_solution_text") or "(no solution captured)",
-        "tags": payload.get("suggested_tags") or [],
-        "metadata_json": metadata,
-    }
-
-    try:
-        data_bytes = json.dumps(body).encode("utf-8")
-        req = urllib.request.Request(
-            f"{base_url}/api/v1/traces",
-            data=data_bytes, method="POST",
-            headers={
-                "Content-Type": "application/json",
-                "X-API-Key": api_key,
-            },
-        )
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            return data.get("id")
-    except (urllib.error.URLError, urllib.error.HTTPError, OSError, json.JSONDecodeError):
-        return None
-
-
-def _looks_like_template(text: str) -> bool:
-    """True when text is the mechanical journey template, not real knowledge.
-
-    From thin journey data, _build_candidate can only synthesize two shapes
-    (see the suggested_*_text construction): "When working with X, encountered:
-    Y..." and "Resolution involved changing <basenames>." Both are scaffolding
-    meant to *seed* a human contribution — never a trace on their own. Empty
-    text counts as template (nothing to publish).
-    """
-    t = (text or "").strip().lower()
-    if not t:
-        return True
-    if t.startswith("when working with") and "encountered:" in t:
-        return True
-    if t.startswith("resolution involved changing"):
-        return True
-    return False
-
-
-def _is_husk(candidate: dict) -> bool:
-    """Quality floor for auto-submit: True = do NOT silently POST this.
-
-    A husk is a candidate carrying no real knowledge — empty, the bare journey
-    template, or tainted with agent-runtime noise (a leaked path). Husks route
-    to the manual-review pending file instead of the public wiki, where a human
-    writes real content or skips. Nothing is lost; the faucet just stops minting
-    template traces (the 49-husk root cause).
-    """
-    ctx = candidate.get("suggested_context_text") or ""
-    sol = candidate.get("suggested_solution_text") or ""
-    if contains_harness_noise(ctx) or contains_harness_noise(sol):
-        return True
-    if _looks_like_template(ctx):
-        return True
-    if _looks_like_template(sol):
-        return True
-    return False
-
-
-def _append_auto_log(entry: dict) -> None:
-    """Append a record of an auto-contributed trace for user audit."""
-    try:
-        AUTO_LOG.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        entry.setdefault("t", time.time())
-        with open(AUTO_LOG, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry) + "\n")
-        try:
-            os.chmod(AUTO_LOG, 0o600)
-        except OSError:
-            pass
-    except OSError:
-        pass
-
-
 def _struggle_artifact(candidate, state_dir, trace_id=""):
     """Write the Wordle-style struggle line for this session's knowledge.
 
@@ -204,41 +104,6 @@ def _struggle_artifact(candidate, state_dir, trace_id=""):
                              meta.get("error_count", 0), trace_id=trace_id)
         write_artifact("last-struggle.txt", line + "\n")
         return line
-    except Exception:
-        return None
-
-
-def _contribution_banner(candidate: dict, trace_id: str = "") -> str | None:
-    """Render the recognizable 'contribution saved' receipt for the Stop
-    systemMessage — so a contribution is visible even in full-auto mode.
-
-    Reuses the aggregate detection metadata already on the candidate (no new
-    data). Best-effort: never raises, never breaks the Stop hook.
-    """
-    try:
-        from artifacts import contribution_banner
-        meta = candidate.get("metadata_json") or {}
-        ev = candidate.get("evidence") or {}
-        where = ""
-        for key in ("config_files", "files", "fix_files",
-                    "security_files", "infra_files"):
-            val = ev.get(key)
-            if isinstance(val, str) and val:
-                where = Path(val).name
-                break
-            if isinstance(val, list) and val:
-                where = Path(val[0]).name
-                break
-        if not where:
-            where = (candidate.get("top_pattern", "") or "").replace("_", " ")
-        return contribution_banner(
-            title=candidate.get("title", "contribution"),
-            where=where,
-            minutes=meta.get("time_to_resolution_minutes", 0),
-            error_count=meta.get("error_count", 0),
-            tokens=meta.get("tokens_to_resolution", 0),
-            trace_id=trace_id,
-        )
     except Exception:
         return None
 
