@@ -365,6 +365,29 @@ def get_project_context(conn: sqlite3.Connection, cwd: str) -> dict | None:
     return ctx
 
 
+def get_project_context_by_id(conn: sqlite3.Connection,
+                              project_id: int) -> dict | None:
+    """Return project context by primary key, or None if not found.
+
+    Same shape as get_project_context. Used when the caller already holds
+    the registered project_id (from the session bridge) and must NOT
+    re-resolve by a path that may be a subdirectory of the project root —
+    the projects table is keyed on the session cwd exactly.
+    """
+    row = conn.execute(
+        "SELECT id, language, framework, session_count FROM projects WHERE id = ?",
+        (project_id,),
+    ).fetchone()
+    if not row:
+        return None
+    ctx = {"project_id": row["id"], "session_count": row["session_count"]}
+    if row["language"]:
+        ctx["language"] = row["language"]
+    if row["framework"]:
+        ctx["framework"] = row["framework"]
+    return ctx
+
+
 # ---------------------------------------------------------------------------
 # Error signatures
 # ---------------------------------------------------------------------------

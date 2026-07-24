@@ -656,10 +656,12 @@ def _check_domain_entry(file_path: str, state_dir: Path) -> dict | None:
         return None
 
     try:
-        from local_store import _get_conn, get_project_context
+        from local_store import _get_conn, get_project_context_by_id
         conn = _get_conn()
-        cwd = str(Path(file_path).parent)
-        ctx = get_project_context(conn, cwd)
+        # Resolve by the registered project_id (session cwd), NOT the edited
+        # file's parent dir — files under src/, api/, lib/… would otherwise
+        # miss the exact WHERE path=? lookup and never fire this pattern.
+        ctx = get_project_context_by_id(conn, project_id)
         conn.close()
 
         # Fire when editing in a language different from project's primary language
