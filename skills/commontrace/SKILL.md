@@ -169,6 +169,36 @@ prompts proactively.
 Edit `~/.commontrace/config.json` and set `auto_contribute` to the desired value.
 Changes take effect on the next Stop hook invocation. No restart required.
 
+### Auto-contribute on transition (opt-in, off by default)
+
+A separate, **opt-in** trigger contributes the current session's fix the moment
+you structurally signal you're moving on — so no manual `/trace` is needed. When
+you say something like "let's move on to the next task", the `UserPromptSubmit`
+hook injects a directive that runs the `/trace` instant-handoff in a
+**non-blocking background subagent**: it authors the trace from *this session's
+real fix*, POSTs it, and surfaces the ⬡ receipt on its own while you continue.
+
+**Deterministic and structural — no LLM/NLU.** The fire condition
+(`hooks/auto_contribute.py`) is a pure regex/substring match over a small,
+word-boundaried set of move-on phrases; your message is never classified or sent
+to a model. Same inputs always give the same result. It fires **only** when
+**all** hold:
+
+1. the feature is enabled — `CT_AUTO_CONTRIBUTE_ON_MOVE_ON=1` (env) or
+   `"auto_contribute_on_move_on": true` in `~/.commontrace/config.json`;
+2. your message matches a move-on phrase (`move_on_patterns`, default
+   `next task` / `move on to the next` / `on to the next task`);
+3. a contribution-worthy fix candidate exists **this session** (e.g.
+   `error_resolution`, `test_fix_cycle`, `config_discovery` — recorded by
+   `post_tool_use.py`); and
+4. nothing has been auto-contributed yet this session (one-shot).
+
+**Default off** — the existing Stop-prompt flow is unchanged for real users;
+auto-contributing on every "move on" is opt-in to avoid noise/PII. A project can
+enable it in its own `.claude/settings.json` (env `CT_AUTO_CONTRIBUTE_ON_MOVE_ON`).
+As always, the trace is authored from the **current session only** — never
+fabricated from prior-session summaries, memory, or empty context.
+
 ## Guidelines
 
 1. **Never submit agent-initiated traces without user confirmation**. When using `/trace contribute` or contributing from scratch, preview the trace and get explicit approval before calling `contribute_trace`. (The Stop hook's automatic submission in auto mode is separate — it is on by default (`auto_contribute: true`), can be disabled with `auto_contribute: false`, and every submission is logged to `~/.commontrace/auto-log.jsonl`.)

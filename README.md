@@ -103,6 +103,7 @@ When the MCP server is connected, Claude has access to:
 | `COMMONTRACE_API_KEY` | (auto-provisioned) | Optional override — set it to use your own account instead of the auto-provisioned anonymous one |
 | `COMMONTRACE_MCP_URL` | `https://mcp.commontrace.org/mcp` | MCP server URL (override for local dev) |
 | `COMMONTRACE_API_BASE_URL` | `https://api.commontrace.org` | API URL (used by hooks) |
+| `CT_AUTO_CONTRIBUTE_ON_MOVE_ON` | (unset → off) | Set `1` to enable [auto-contribute on transition](#auto-contribute-on-transition-opt-in-off-by-default) for this environment. Off by default; env takes precedence over the config key |
 
 ### `~/.commontrace/config.json` keys
 
@@ -110,6 +111,37 @@ When the MCP server is connected, Claude has access to:
 |-----|---------|-------------|
 | `auto_contribute` | `true` | Submit detected knowledge automatically; set `false` to review via `/trace contribute` |
 | `resolved_with_trailer` | `true` | Suggest the `Resolved-with:` disclosure trailer after commons-assisted fixes |
+| `auto_contribute_on_move_on` | `false` | Contribute the current session's fix as a background `/trace` handoff when you structurally signal you are moving on (e.g. "next task"). **Deterministic + structural — no LLM/NLU** (see below). Off by default; also enabled by `CT_AUTO_CONTRIBUTE_ON_MOVE_ON=1` |
+| `move_on_patterns` | (built-in set) | Optional list of regex phrases (word-boundaried, matched case-insensitively) that count as "moving on". Defaults to `next task`, `move on to the next`, `on to the next task` |
+
+### Auto-contribute on transition (opt-in, off by default)
+
+When enabled, the `UserPromptSubmit` hook contributes the current session's
+fix **the moment you naturally move on** — no manual `/trace` needed. The
+contribution runs as a **non-blocking background handoff** (identical to
+`/trace`): a hidden subagent authors the trace from *this session's real fix*,
+POSTs it, and surfaces the ⬡ receipt on its own while the main thread proceeds
+to the next task.
+
+**It is fully deterministic and structural — no LLM, no NLU.** The fire
+condition (`hooks/auto_contribute.py`) is a pure regex/substring match over a
+small, word-boundaried set of move-on phrases; your message is never sent to a
+model or classified. The trigger fires **only** when **all** of:
+
+1. the feature is enabled (`CT_AUTO_CONTRIBUTE_ON_MOVE_ON=1` or
+   `auto_contribute_on_move_on: true`),
+2. your message matches a `move_on_patterns` phrase,
+3. a contribution-worthy fix candidate exists **this session** (an
+   `error_resolution` / `test_fix_cycle` / `config_discovery` / … candidate
+   recorded by `post_tool_use.py`), and
+4. nothing has been auto-contributed yet this session (one-shot per session).
+
+**Off by default** so real users' existing Stop-prompt flow is unchanged;
+silently contributing on every "move on" is opt-in to avoid noise/PII. Enable
+it per-project — e.g. a demo repo's `.claude/settings.json` sets
+`CT_AUTO_CONTRIBUTE_ON_MOVE_ON=1` so the user "just types the agreed lines."
+The trace is always authored from the **current session only** — never
+fabricated from stale or empty context.
 
 ## Related Repositories
 
