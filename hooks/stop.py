@@ -22,6 +22,7 @@ Importance scoring (structural, no NLU):
   cross_file_breadth:     1.5  — changes spanning 3+ directories
   generation_effect:      1.5  — solved without external knowledge
   workaround:             1.5  — research + errors + changes
+  fail_then_succeed:      1.5  — error → change → bash success (not if error_resolution)
   temporal_investment:    1.0  — long session with sustained activity
 
 Temporal proximity compounding: patterns near high-signal events get a
@@ -564,6 +565,22 @@ def compute_importance(state_dir: Path, effectiveness: dict | None = None) -> tu
         evidence["workaround"] = {
             "research_count": len(research),
             "error_count": len(errors),
+        }
+
+    # ── Fail→Succeed (1.5) — error → change → bash success ──
+    # Detected in post_tool_use.py; scored here at the workaround tier.
+    # Suppressed when error_resolution already fired so the same
+    # error → fix → success story isn't double-counted. Landing in `scores`
+    # lets temporal-proximity compounding boost it near high-signal events.
+    fts_candidates = [
+        c for c in candidates if c.get("pattern") == "fail_then_succeed"
+    ]
+    if fts_candidates and "error_resolution" not in scores:
+        scores["fail_then_succeed"] = 1.5
+        fc = fts_candidates[-1]
+        evidence["fail_then_succeed"] = {
+            "error_count": fc.get("error_count", 0),
+            "fix_files": fc.get("fix_files", [])[:5],
         }
 
     # ── User Correction (2.5) — user redirected the approach ──
