@@ -123,8 +123,8 @@ def main() -> None:
             "hookSpecificOutput": {
                 "hookEventName": "UserPromptSubmit",
                 "additionalContext": (
-                    "Reminder: search CommonTrace (search_traces) before "
-                    "solving coding problems. Contribute after solving."
+                    "Reminder: search CommonTrace with /recall before "
+                    "solving coding problems. Contribute with /trace after solving."
                 ),
             }
         }

@@ -1054,51 +1054,6 @@ def handle_trace_consumption(data: dict, state_dir: Path) -> None:
         log_hook_error("trace_consumption_cache", e)
 
 
-def handle_search_results(data: dict, state_dir: Path) -> None:
-    """Handle search_traces: cache search result pointers locally."""
-    resp = _parse_tool_response(data)
-    if not resp:
-        return
-
-    results = resp.get("results", [])
-    if not results:
-        return
-
-    try:
-        from local_store import _get_conn, cache_trace_pointer
-        project_id = _read_project_id(state_dir)
-        conn = _get_conn()
-        for r in results[:5]:
-            trace_id = r.get("id", "")
-            title = r.get("title", "")
-            if trace_id and title:
-                cache_trace_pointer(conn, trace_id, project_id, title,
-                                    source="search")
-        conn.close()
-    except Exception as e:
-        log_hook_error("search_results_cache", e)
-
-
-def handle_vote(data: dict, state_dir: Path) -> None:
-    """Handle vote_trace: record vote on cached trace pointer."""
-    tool_input = data.get("tool_input", {})
-    if not isinstance(tool_input, dict):
-        return
-
-    trace_id = tool_input.get("trace_id", "")
-    vote_type = tool_input.get("vote_type", "")
-    if not trace_id or vote_type not in ("up", "down"):
-        return
-
-    try:
-        from local_store import _get_conn, record_trace_vote_v2
-        conn = _get_conn()
-        record_trace_vote_v2(conn, trace_id, vote_type)
-        conn.close()
-    except Exception as e:
-        log_hook_error("vote_record", e)
-
-
 def handle_contribution(data: dict, state_dir: Path) -> None:
     """Handle MCP contribute_trace: record contribution + store locally."""
     tool_response = data.get("tool_response", {})
@@ -1143,20 +1098,6 @@ def handle_contribution(data: dict, state_dir: Path) -> None:
             log_hook_error("contribution_cache", e)
 
 
-def handle_amendment(data: dict, state_dir: Path) -> None:
-    """Handle MCP amend_trace: no-op for local storage.
-
-    trace_cache stores only title (not solution content), so amendments
-    have no local storage effect. The API handles the amendment via MCP.
-    """
-    tool_input = data.get("tool_input", {})
-    if not isinstance(tool_input, dict):
-        return
-
-    trace_id = tool_input.get("trace_id", "")
-    improved_solution = tool_input.get("improved_solution", "")
-    if not trace_id or not improved_solution:
-        return
     # No local storage update needed — trace_cache stores only title.
 
 
@@ -1193,15 +1134,6 @@ def main() -> None:
 
     elif "contribute_trace" in tool_name:
         handle_contribution(data, state_dir)
-
-    elif "amend_trace" in tool_name:
-        handle_amendment(data, state_dir)
-
-    elif "search_traces" in tool_name:
-        handle_search_results(data, state_dir)
-
-    elif "vote_trace" in tool_name:
-        handle_vote(data, state_dir)
 
     if output:
         print(json.dumps(output))

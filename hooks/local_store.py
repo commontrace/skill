@@ -7,6 +7,7 @@ The remote PostgreSQL API is the source of truth. This store tracks only:
   - trace_cache: pointers (id + title) for recently seen traces
   - trigger_feedback: which triggers led to trace consumption
   - error_signatures: error fingerprints + the fix that resolved them (recurrence detection and error-time injection)
+  - savings_events: permanent ledger of minutes/tokens the commons saved (v4)
 
 All functions accept an open connection (callers call _get_conn()).
 All write operations call conn.commit() immediately.
@@ -289,7 +290,7 @@ def _get_conn() -> sqlite3.Connection:
     conn.execute("PRAGMA temp_store=MEMORY")
     conn.row_factory = sqlite3.Row
     _apply_migrations(conn)
-    conn.executescript(_SCHEMA)  # CREATE IF NOT EXISTS for all 5 tables
+    conn.executescript(_SCHEMA)  # CREATE IF NOT EXISTS for all 6 tables
     return conn
 
 

@@ -713,16 +713,16 @@ def main() -> None:
             f"CommonTrace found relevant knowledge for this project:\n\n"
             f"{context_lines}\n\n"
             f"IMPORTANT: Before solving coding problems, search CommonTrace with "
-            f"search_traces for existing solutions. After solving, contribute with "
-            f"contribute_trace."
+            f"/recall for existing solutions. After solving a non-trivial "
+            f"problem, contribute it with /trace."
         )
     else:
         additional_context = (
             f"{contribution_recall}"
             "CommonTrace knowledge base is connected. "
             "IMPORTANT: Before solving coding problems, fixing bugs, or debugging errors, "
-            "search CommonTrace with search_traces for existing solutions. "
-            "After solving a non-trivial problem, contribute with contribute_trace."
+            "search CommonTrace with /recall for existing solutions. "
+            "After solving a non-trivial problem, contribute it with /trace."
         )
 
     # Pending traces hint (manual mode only — auto mode submits live).
