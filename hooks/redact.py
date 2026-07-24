@@ -56,25 +56,29 @@ def is_sensitive_file(file_path: str) -> bool:
 
 
 def redact_command(command: str) -> str:
-    """Redact secrets from a bash command string."""
+    """Redact secrets from a bash command string before storage/transport.
+
+    Commands are persisted (local.db fix_command, suggested_solution text),
+    so they must be scrubbed as hard as free text. We first strip the
+    flag/assignment forms that keep a useful key/flag for context, then run
+    the full SECRET_PATTERNS sweep so header-carried secrets
+    (`-H "Authorization: Bearer …"`, `-H "x-api-key: …"`), connection-string
+    credentials, and AWS keys can't leak.
+    """
     if not command:
         return command
-    # Redact inline env vars with secret-like names
-    result = re.sub(
-        r'(?:API_KEY|TOKEN|PASSWORD|SECRET|CREDENTIAL|AUTH_TOKEN)\s*=\s*\S+',
-        r'\g<0>'.split('=')[0] + '=[REDACTED]' if '=' in command else '[REDACTED]',
-        command,
-        flags=re.IGNORECASE,
-    )
-    # Simpler approach: just redact the value part
+    # Named env-var assignments — value redacted, key kept for context.
     result = re.sub(
         r'((?:API_KEY|TOKEN|PASSWORD|SECRET|CREDENTIAL|AUTH_TOKEN)\s*=)\s*\S+',
         r'\1[REDACTED]',
         command,
         flags=re.IGNORECASE,
     )
-    # Redact -p/--password arguments
+    # -p/--password flag values (not covered by SECRET_PATTERNS).
     result = re.sub(r'(-p\s*|--password[= ])\S+', r'\1[REDACTED]', result)
+    # Full secret-pattern sweep (Bearer, ://user:pass@, `key: value` headers,
+    # AWS keys, private-key blocks, high-entropy tokens).
+    result = redact_text(result)
     return result
 
 
