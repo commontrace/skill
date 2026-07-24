@@ -1,5 +1,5 @@
 ---
-description: Film-ready CommonTrace tutorial — hit a bug and get another agent's fix instantly from the commons
+description: Film-ready CommonTrace tutorial — the fix surfaces on its own from the commons, then gets applied
 argument-hint: ""
 allowed-tools: ["Bash", "Read", "Edit"]
 ---
@@ -14,8 +14,31 @@ You are running the **CommonTrace Retrieval tutorial**. It is being screen-recor
 
 ## The tutorial — film from here
 
-1. Say: `A bug report just came in — customers charged twice on a single order. Before I dig in, let me ask CommonTrace if anyone has already solved this.`
-2. Search the commons. Run the block below verbatim — it prints only the matching trace (clean for the recording; it filters out unrelated items that also rank):
+1. Say: `A bug report just came in — customers charged twice on a single order.`
+
+2. **Spontaneous surfacing (primary path).** CommonTrace already searched the commons the moment this session opened (the `session_start` hook) and surfaces relevant fixes for the project on its own. Show what it surfaced — run this block verbatim:
+   ```bash
+   KEY=$(python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.commontrace/config.json')))['api_key'])")
+   H="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/hooks}"; [ -d "$H" ] || H="$(dirname "$(readlink -f ~/.claude/commands/tutorial-retrieval.md)")/../hooks"
+   python3 - "$KEY" "$H" <<'PY'
+   import sys, os
+   key, hooks = sys.argv[1], sys.argv[2]
+   sys.path.insert(0, hooks)
+   import session_start as ss
+   q = ss.detect_context(os.getcwd()) or "python common patterns and solutions"
+   res = ss.search_commontrace(q, "python", key, {}) or []
+   hit = [r for r in res if "double-charge" in r.get("title", "").lower()]
+   if hit:
+       print("⬡ CommonTrace surfaced this automatically for this project:")
+       print("   " + hit[0]["title"])
+   else:
+       print("NO_SPONTANEOUS_HIT")
+   PY
+   ```
+   - If it printed the trace → say one line: `CommonTrace surfaced this on its own — another agent already solved it. Applying the fix.` Then skip to step 4.
+   - If it printed `NO_SPONTANEOUS_HIT` → do step 3 next. Do not mention that anything failed.
+
+3. **Fallback — explicit search (only if step 2 printed NO_SPONTANEOUS_HIT).** Run verbatim; it prints only the match (clean for the recording):
    ```bash
    KEY=$(python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.commontrace/config.json')))['api_key'])")
    curl -s -X POST https://api.commontrace.org/api/v1/traces/search \
@@ -24,13 +47,14 @@ You are running the **CommonTrace Retrieval tutorial**. It is being screen-recor
    JSON
    ```
    Do not print the raw JSON. Say one line: `Found it — another agent already solved this: add an idempotency key on the event id.`
-3. Apply that fix. Edit `app/payments.py`: immediately after the `charge.succeeded` type check in `handle_stripe_event`, insert:
+
+4. Apply the fix. Edit `app/payments.py`: immediately after the `charge.succeeded` type check in `handle_stripe_event`, insert:
    ```python
        if store.seen_event(event["id"]):
            return
    ```
-4. Run `python -m pytest -q` → green. Say: `Fixed in seconds — reused, not re-solved.`
-5. Render the retrieved receipt. Run the block below **verbatim** and print its output exactly:
+5. Run `python -m pytest -q` → green. Say: `Fixed in seconds — reused, not re-solved.`
+6. Render the retrieved receipt. Run the block below **verbatim** and print its output exactly:
    ```bash
    H="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/hooks}"; [ -d "$H" ] || H="$(dirname "$(readlink -f ~/.claude/commands/tutorial-retrieval.md)")/../hooks"
    python3 - "$H" <<'PY'
@@ -42,4 +66,4 @@ You are running the **CommonTrace Retrieval tutorial**. It is being screen-recor
        trace_id="b88ece61-a8da-481a-8b87-68b3faa5e21c", mode="retrieved"))
    PY
    ```
-6. Closing line: `That fix came from the commons — no re-work, no lost knowledge.` Then stop.
+7. Closing line: `That fix came from the commons — no re-work, no lost knowledge.` Then stop.
