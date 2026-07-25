@@ -1,0 +1,52 @@
+name: Windows CI
+
+# The hooks ship to every user, including Windows, where an external
+# verification pass (2026-07-25) found a class of Windows-only bugs the Linux
+# CI could not catch: interpreter resolution (python vs python3), cp1252
+# stdout/stdin encoding (the ⬡ receipt + mojibake in captures), and PATHEXT.
+# This job runs the hook suite on a real Windows runner so those regress loudly.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: windows-ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test-windows:
+    name: test (hooks, Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          # python.org layout: provides `python` (not `python3`), matching a
+          # stock Windows dev box — exactly where the interpreter bugs surfaced.
+          python-version: "3.12"
+
+      - name: Interpreter is resolvable (python.org ships `python`)
+        shell: bash
+        run: python -c "import sys; assert sys.version_info[:2] == (3, 12); print(sys.version)"
+
+      - name: Run hook unit tests (Windows)
+        shell: bash
+        env:
+          PYTHONPATH: tests;hooks
+        run: python -m unittest discover -s tests
+
+      - name: Receipt banner renders under cp1252 stdout (issue 6)
+        shell: bash
+        run: |
+          PYTHONIOENCODING=cp1252 python -c "import sys; sys.path.insert(0, 'hooks'); import artifacts; print(artifacts.contribution_banner(title='t', where='w', minutes=1, error_count=0, tokens=1000))"
+
+      - name: Mojibake attribution — stdin UTF-8 survives in the hook (issue 9)
+        shell: bash
+        # If this passes on the runner but real sessions still store mojibake,
+        # the fault is UPSTREAM of the hook (the harness console handing us
+        # cp1252 bytes), not in the capture path — which is what to conclude.
+        run: |
+          printf '%s' '{"tool":"Bash","payload":"jest √ keeps order"}' \
+            | python -c "import sys; sys.stdin.reconfigure(encoding='utf-8', errors='replace'); d=sys.stdin.read(); assert '√' in d, repr(d); print('stdin UTF-8 preserved on Windows:', d)"
