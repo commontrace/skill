@@ -8,10 +8,12 @@ PII and assert none of it reaches any artifact.
 import contextlib
 import io
 import json
+import os
 import sys
 import time
 import unittest
 import xml.etree.ElementTree
+from unittest import mock
 
 from base import HookTestCase
 
@@ -276,6 +278,31 @@ class TestWriteArtifactAndCLI(HookTestCase):
         if not sys.platform.startswith("win"):
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
             self.assertEqual(path.parent.stat().st_mode & 0o777, 0o700)
+
+    def test_write_artifact_skips_icacls_on_posix(self):
+        # Issue #4: the Windows ACL hardening is a no-op off Windows — icacls
+        # is never spawned. Force a non-nt os.name so this is host-independent.
+        with mock.patch.object(os, "name", "posix"), \
+             mock.patch("subprocess.run") as mrun:
+            artifacts.write_artifact("probe.txt", "hi\n")
+        mrun.assert_not_called()
+
+    def test_write_artifact_restricts_acl_on_nt(self):
+        # Issue #4: on Windows, write_artifact tightens the file ACL to the
+        # current user via icacls (mode bits don't apply there). Mock-based —
+        # os.name forced to 'nt', subprocess.run stubbed.
+        with mock.patch.object(os, "name", "nt"), \
+             mock.patch("subprocess.run") as mrun, \
+             mock.patch.dict(os.environ, {"USERNAME": "devuser"}):
+            path = artifacts.write_artifact("probe.txt", "hi\n")
+        self.assertEqual(path.read_text(encoding="utf-8"), "hi\n")
+        mrun.assert_called_once()
+        argv = mrun.call_args.args[0]
+        self.assertEqual(argv[0], "icacls")
+        self.assertIn(str(path), argv)
+        self.assertIn("/inheritance:r", argv)
+        self.assertIn("/grant:r", argv)
+        self.assertIn("devuser:F", argv)
 
     def test_cli_brain_writes_three_files(self):
         conn = self.get_conn()

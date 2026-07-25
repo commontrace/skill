@@ -482,7 +482,12 @@ def compiled_recap(conn, year, month):
 
 
 def write_artifact(name, content):
-    """Write an artifact under ARTIFACTS_DIR with H9 perms (0700/0600)."""
+    """Write an artifact under ARTIFACTS_DIR with H9 perms (0700/0600).
+
+    Issue #4: POSIX mode 0o600 is a no-op on Windows, so on Windows the file's
+    ACL is additionally restricted to the current user via icacls (best-effort,
+    never raises). No-op on POSIX. The os.chmod call is kept.
+    """
     ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
     ARTIFACTS_DIR.chmod(0o700)
     path = ARTIFACTS_DIR / name
@@ -491,6 +496,8 @@ def write_artifact(name, content):
         os.chmod(path, 0o600)
     except OSError:
         pass
+    from session_state import restrict_to_user_windows
+    restrict_to_user_windows(path)
     return path
 
 

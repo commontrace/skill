@@ -133,6 +133,10 @@ def save_config(config: dict) -> None:
     Uses tempfile.mkstemp in the same directory + os.replace so a crash
     mid-write cannot corrupt config.json. Permissions are set to 0o600
     before the rename so the file is never world-readable even briefly.
+
+    Hardening (Issue #4): POSIX mode 0o600 is a no-op on Windows, so on Windows
+    the persisted file's ACL is additionally restricted to the current user via
+    icacls (best-effort, never blocks). No-op on POSIX.
     """
     try:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -149,6 +153,10 @@ def save_config(config: dict) -> None:
                 pass
             raise
         os.replace(tmp_path, CONFIG_FILE)
+        # Windows: mode bits above don't restrict access — tighten the ACL to
+        # the current user (best-effort, never raises, no-op on POSIX).
+        from session_state import restrict_to_user_windows
+        restrict_to_user_windows(CONFIG_FILE)
     except OSError as e:
         # Status-bearing: a failed config write means the API key never
         # persists → re-provision (orphan anonymous account) every session.

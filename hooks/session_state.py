@@ -61,6 +61,35 @@ def log_hook_error(where: str, exc: BaseException) -> None:
     except Exception:
         pass
 
+
+def restrict_to_user_windows(path) -> None:
+    """Best-effort: restrict a file's ACL to the current user on Windows.
+
+    POSIX mode bits (``os.chmod(path, 0o600)``) are a no-op on Windows, so a
+    freshly written secret (the API key in config.json, local artifacts) simply
+    inherits the parent directory's ACL and can be readable by other accounts
+    on the machine (Issue #4). On Windows ONLY, tighten it with icacls: break
+    inheritance (``/inheritance:r``) and grant full control to the current user
+    alone (``/grant:r <user>:F``). No-op on every other platform.
+
+    Never raises and never blocks provisioning: icacls runs with output
+    captured and a short timeout, and any failure (icacls missing, odd path,
+    timeout) is logged locally via log_hook_error, then swallowed. Callers keep
+    the existing os.chmod call — this is additive hardening, not a replacement.
+    """
+    if os.name != "nt":
+        return
+    try:
+        import subprocess
+        user = os.environ.get("USERNAME", "%USERNAME%")
+        subprocess.run(
+            ["icacls", str(path), "/inheritance:r", "/grant:r", f"{user}:F"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except Exception as e:
+        log_hook_error("restrict_to_user_windows", e)
+
+
 # Config-like file patterns (for detecting configuration changes)
 CONFIG_EXTENSIONS = {
     ".json", ".yaml", ".yml", ".toml", ".ini", ".env", ".cfg",

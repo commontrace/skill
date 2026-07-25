@@ -402,3 +402,58 @@ class TestSilentSuccessSweep(OnboardingTestCase):
         with mock.patch.object(stop, "PENDING_DIR", blocker / "pending"):
             stop._write_pending("sess", {"kind": "score"})
         self.assertIn("[write_pending]", self._log_text())
+
+
+class TestWindowsAclHardening(OnboardingTestCase):
+    """Issue #4 full fix: on Windows, secrets are ACL-restricted via icacls.
+
+    POSIX mode 0o600 is a no-op on Windows, so the API key / artifacts would
+    inherit the parent ACL. restrict_to_user_windows tightens the file to the
+    current user with icacls — Windows only, best-effort, never blocking. Tests
+    force os.name so they are host-independent and stub subprocess.run.
+    """
+
+    def _log_text(self) -> str:
+        log = session_state.HOOK_ERROR_LOG
+        return log.read_text(encoding="utf-8") if log.exists() else ""
+
+    def test_helper_skips_on_non_windows(self):
+        with mock.patch.object(os, "name", "posix"), \
+             mock.patch("subprocess.run") as mrun:
+            session_state.restrict_to_user_windows(self.tmp_path / "config.json")
+        mrun.assert_not_called()
+
+    def test_helper_invokes_icacls_on_nt(self):
+        target = self.tmp_path / "config.json"
+        with mock.patch.object(os, "name", "nt"), \
+             mock.patch("subprocess.run") as mrun, \
+             mock.patch.dict(os.environ, {"USERNAME": "devuser"}):
+            session_state.restrict_to_user_windows(target)
+        mrun.assert_called_once()
+        argv = mrun.call_args.args[0]
+        self.assertEqual(argv[0], "icacls")
+        self.assertIn(str(target), argv)
+        self.assertIn("/inheritance:r", argv)
+        self.assertIn("/grant:r", argv)
+        self.assertIn("devuser:F", argv)
+
+    def test_helper_never_raises_and_logs_on_failure(self):
+        # icacls missing / any failure must be swallowed + logged, never raised.
+        with mock.patch.object(os, "name", "nt"), \
+             mock.patch("subprocess.run",
+                        side_effect=FileNotFoundError("icacls missing")):
+            session_state.restrict_to_user_windows(self.tmp_path / "x")
+        self.assertIn("[restrict_to_user_windows]", self._log_text())
+
+    def test_save_config_restricts_acl_on_nt(self):
+        # Integration: save_config still persists the key AND fires icacls on nt.
+        with mock.patch.object(os, "name", "nt"), \
+             mock.patch("subprocess.run") as mrun, \
+             mock.patch.dict(os.environ, {"USERNAME": "devuser"}):
+            session_start.save_config({"api_key": "k"})
+        self.assertEqual(session_start.load_config().get("api_key"), "k")
+        mrun.assert_called_once()
+        argv = mrun.call_args.args[0]
+        self.assertEqual(argv[0], "icacls")
+        self.assertIn(str(session_start.CONFIG_FILE), argv)
+        self.assertIn("devuser:F", argv)
