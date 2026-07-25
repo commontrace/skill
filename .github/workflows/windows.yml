@@ -44,9 +44,13 @@ jobs:
 
       - name: Mojibake attribution — stdin UTF-8 survives in the hook (issue 9)
         shell: bash
-        # If this passes on the runner but real sessions still store mojibake,
-        # the fault is UPSTREAM of the hook (the harness console handing us
-        # cp1252 bytes), not in the capture path — which is what to conclude.
+        # The assert is the test: after sys.stdin.reconfigure(utf-8), the non-ASCII
+        # char survives decoding. If this passes on the runner but real sessions
+        # still store mojibake, the fault is UPSTREAM of the hook (the harness
+        # console handing us cp1252 bytes), not in the capture path.
+        # NB: we do NOT print the char back out — stdout is cp1252 here (that's
+        # issue 6's domain, covered by the receipt step), so echoing it would
+        # crash the check itself rather than test stdin.
         run: |
           printf '%s' '{"tool":"Bash","payload":"jest √ keeps order"}' \
-            | python -c "import sys; sys.stdin.reconfigure(encoding='utf-8', errors='replace'); d=sys.stdin.read(); assert '√' in d, repr(d); print('stdin UTF-8 preserved on Windows:', d)"
+            | python -c "import sys; sys.stdin.reconfigure(encoding='utf-8', errors='replace'); d=sys.stdin.read(); assert '√' in d, repr(d); print('stdin UTF-8 decoding OK on Windows (mojibake, if any, is upstream)')"
