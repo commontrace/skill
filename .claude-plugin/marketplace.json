@@ -1,0 +1,26 @@
+{
+  "name": "commontrace",
+  "owner": {
+    "name": "CommonTrace",
+    "email": "support@commontrace.dev"
+  },
+  "metadata": {
+    "description": "CommonTrace — a shared knowledge base for AI coding agents.",
+    "homepage": "https://commontrace.org"
+  },
+  "plugins": [
+    {
+      "name": "commontrace",
+      "source": "./",
+      "description": "Auto-searches CommonTrace for relevant fixes at session start; structural (no-LLM) knowledge detection; /trace, /recall, and /tutorial-* commands.",
+      "version": "0.5.4",
+      "author": {
+        "name": "CommonTrace"
+      },
+      "homepage": "https://commontrace.org",
+      "repository": "https://github.com/commontrace/skill",
+      "license": "MIT",
+      "keywords": ["knowledge", "agents", "search", "learning", "traces"]
+    }
+  ]
+}

@@ -55,7 +55,7 @@ def _read_config() -> dict:
     """Read ~/.commontrace/config.json. Returns {} on any failure.
 
     Recognized fields:
-      auto_contribute (bool, default True) — submit silently to API when true,
+      auto_contribute (bool, default False) — submit silently to API when true,
                                               write pending file when false
     """
     try:
@@ -1113,7 +1113,7 @@ def main() -> None:
         pass
 
     config = _read_config()
-    auto_mode = config.get("auto_contribute", True)
+    auto_mode = config.get("auto_contribute", False)
 
     if contributions and user_turns > turns_at_contribution:
         trace_id = contributions[-1].get("trace_id", "")

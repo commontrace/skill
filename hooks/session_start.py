@@ -43,16 +43,18 @@ FIRST_RUN_NOTICE = (
     "CommonTrace first-run notice — relay this to the user in one short "
     "paragraph at the start of your reply: CommonTrace is now connected. An "
     "anonymous account was created automatically (random ID, no personal "
-    "data) and the API key is stored at ~/.commontrace/config.json. Sessions "
-    "now search a shared knowledge base of coding fixes, and solved problems "
-    "are auto-contributed back in anonymized, secret-redacted form (set "
-    "auto_contribute to false in ~/.commontrace/config.json to review before "
-    "anything is shared). To use a personal account: set the "
-    "COMMONTRACE_API_KEY environment variable. To disconnect entirely: "
-    "run 'claude plugin remove commontrace' and 'claude mcp remove "
-    "commontrace', then delete ~/.commontrace. MCP "
-    "tools (search_traces, contribute_trace) load from the next session "
-    "onward."
+    "data) and the API key is stored at ~/.commontrace/config.json. What "
+    "leaves your machine: at session start, a search using only your "
+    "project's language/framework tag (no code, no file contents, no "
+    "prompts) to fetch relevant fixes. Nothing is contributed automatically "
+    "by default — when you solve something worth sharing you'll be asked "
+    "first, and the contribution is a secret-redacted title/problem/solution "
+    "summary (no transcripts, no files). Choose 'Always' at that prompt to "
+    "enable passive auto-contribution, or set auto_contribute to true in "
+    "~/.commontrace/config.json. To use a personal account: set the "
+    "COMMONTRACE_API_KEY environment variable. To disconnect entirely: run "
+    "'claude plugin remove commontrace' and 'claude mcp remove commontrace', "
+    "then delete ~/.commontrace. MCP tools load from the next session onward."
 )
 
 FIRST_RUN_NOTICE_DEGRADED = (
@@ -727,7 +729,7 @@ def main() -> None:
 
     # Pending traces hint (manual mode only — auto mode submits live).
     config = load_config()
-    if not config.get("auto_contribute", True):
+    if not config.get("auto_contribute", False):
         pending_n = count_pending_traces()
         if pending_n > 0:
             additional_context += (

@@ -13,8 +13,11 @@ Claude Code plugin for [CommonTrace](https://commontrace.org) — integrates the
 
 ## Install
 
-```bash
-claude plugin add commontrace@commontrace/skill
+Run these inside Claude Code:
+
+```
+/plugin marketplace add commontrace/skill
+/plugin install commontrace@commontrace
 ```
 
 That's it. Your next Claude Code session sets everything up automatically:
@@ -25,6 +28,13 @@ That's it. Your next Claude Code session sets everything up automatically:
 4. Relays a one-time notice describing exactly what was set up and how to undo it
 
 No account, no email, no environment variables, no decisions.
+
+## What leaves your machine, and when
+
+- **At session start:** a search using only your project's **language/framework tag** (e.g. `python`) — **no code, no file contents, no prompts** — to fetch relevant fixes.
+- **Contributions:** nothing is shared automatically by default. When you solve something worth keeping, you're **asked first**; the contribution is a **secret-redacted** title/problem/solution summary plus aggregate metadata (minutes, error count, token estimate) — **no transcripts, no file dumps**. Choose **Always** at the prompt (or set `auto_contribute: true` in `~/.commontrace/config.json`) to enable passive auto-contribution thereafter.
+- **Stays local, never sent:** `~/.commontrace/local.db` (aggregate counters and trace pointers only).
+- **Scope:** the MCP server registers at **user scope**, so it's active across all your repos. Remove it per the Uninstall section if you don't want that on client work.
 
 ### Use your own account instead (optional)
 

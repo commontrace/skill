@@ -1,5 +1,6 @@
 {
   "description": "CommonTrace: three-layer knowledge detection system",
+  "_interpreter_note": "Hooks resolve Python portably: prefer `python` (works on Windows python.org installs, where `python3` is often a Microsoft Store stub), fall back to `python3` (Debian/Ubuntu, where `python` is absent). exec keeps the hook's real exit code; a missing interpreter fails loudly instead of silently no-op'ing.",
   "hooks": {
     "SessionStart": [
       {
@@ -7,7 +8,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/session_start.py",
+            "command": "if command -v python >/dev/null 2>&1; then exec python \"${CLAUDE_PLUGIN_ROOT}/hooks/session_start.py\"; else exec python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/session_start.py\"; fi",
             "timeout": 10
           }
         ]
@@ -19,7 +20,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/post_tool_use.py",
+            "command": "if command -v python >/dev/null 2>&1; then exec python \"${CLAUDE_PLUGIN_ROOT}/hooks/post_tool_use.py\"; else exec python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/post_tool_use.py\"; fi",
             "timeout": 5
           }
         ]
@@ -29,7 +30,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/post_tool_use.py",
+            "command": "if command -v python >/dev/null 2>&1; then exec python \"${CLAUDE_PLUGIN_ROOT}/hooks/post_tool_use.py\"; else exec python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/post_tool_use.py\"; fi",
             "timeout": 3
           }
         ]
@@ -39,7 +40,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/post_tool_use.py",
+            "command": "if command -v python >/dev/null 2>&1; then exec python \"${CLAUDE_PLUGIN_ROOT}/hooks/post_tool_use.py\"; else exec python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/post_tool_use.py\"; fi",
             "timeout": 3
           }
         ]
@@ -49,7 +50,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/post_tool_use.py",
+            "command": "if command -v python >/dev/null 2>&1; then exec python \"${CLAUDE_PLUGIN_ROOT}/hooks/post_tool_use.py\"; else exec python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/post_tool_use.py\"; fi",
             "timeout": 3
           }
         ]
@@ -59,7 +60,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/post_tool_use.py",
+            "command": "if command -v python >/dev/null 2>&1; then exec python \"${CLAUDE_PLUGIN_ROOT}/hooks/post_tool_use.py\"; else exec python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/post_tool_use.py\"; fi",
             "timeout": 3
           }
         ]
@@ -69,7 +70,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/post_tool_use.py",
+            "command": "if command -v python >/dev/null 2>&1; then exec python \"${CLAUDE_PLUGIN_ROOT}/hooks/post_tool_use.py\"; else exec python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/post_tool_use.py\"; fi",
             "timeout": 3
           }
         ]
@@ -79,7 +80,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/post_tool_use.py",
+            "command": "if command -v python >/dev/null 2>&1; then exec python \"${CLAUDE_PLUGIN_ROOT}/hooks/post_tool_use.py\"; else exec python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/post_tool_use.py\"; fi",
             "timeout": 3
           }
         ]
@@ -90,7 +91,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/post_tool_failure.py",
+            "command": "if command -v python >/dev/null 2>&1; then exec python \"${CLAUDE_PLUGIN_ROOT}/hooks/post_tool_failure.py\"; else exec python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/post_tool_failure.py\"; fi",
             "timeout": 3
           }
         ]
@@ -101,7 +102,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/user_prompt.py",
+            "command": "if command -v python >/dev/null 2>&1; then exec python \"${CLAUDE_PLUGIN_ROOT}/hooks/user_prompt.py\"; else exec python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/user_prompt.py\"; fi",
             "timeout": 3
           }
         ]
@@ -112,7 +113,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/stop.py",
+            "command": "if command -v python >/dev/null 2>&1; then exec python \"${CLAUDE_PLUGIN_ROOT}/hooks/stop.py\"; else exec python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/stop.py\"; fi",
             "timeout": 5
           }
         ]
