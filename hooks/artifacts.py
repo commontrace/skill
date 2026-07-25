@@ -19,6 +19,17 @@ import sys
 import time
 from pathlib import Path
 
+# The receipt banner opens with ⬡ (U+2B21) and uses box-drawing glyphs. On
+# Windows the console defaults to cp1252, so printing the banner raised
+# UnicodeEncodeError and killed the (on-camera) receipt. Force UTF-8 with
+# errors="replace" so encoding can never crash the print. Guarded because
+# reconfigure() is absent on some stream types / older Pythons and when
+# stdout is redirected. No-op on POSIX (already UTF-8).
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 sys.path.insert(0, str(Path(__file__).parent))
 
 ARTIFACTS_DIR = Path.home() / ".commontrace" / "artifacts"
