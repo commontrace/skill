@@ -22,7 +22,7 @@ Run these inside Claude Code:
 
 That's it. Your next Claude Code session sets everything up automatically:
 
-1. Creates an anonymous account (random ID, no personal data) and stores the API key at `~/.commontrace/config.json` (mode 0600)
+1. Creates an anonymous account (random ID, no personal data) and stores the API key at `~/.commontrace/config.json` (mode 0600 on POSIX; Windows uses the default ACL, since POSIX mode bits don't apply)
 2. Registers the MCP server (`claude mcp add commontrace`, user scope)
 3. Runs the first knowledge-base search for your project
 4. Relays a one-time notice describing exactly what was set up and how to undo it

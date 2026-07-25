@@ -8,6 +8,7 @@ PII and assert none of it reaches any artifact.
 import contextlib
 import io
 import json
+import sys
 import time
 import unittest
 import xml.etree.ElementTree
@@ -270,8 +271,11 @@ class TestWriteArtifactAndCLI(HookTestCase):
         path = artifacts.write_artifact("probe.txt", "hello\n")
         self.assertEqual(path.read_text(encoding="utf-8"), "hello\n")
         self.assertEqual(path.parent, artifacts.ARTIFACTS_DIR)
-        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
-        self.assertEqual(path.parent.stat().st_mode & 0o777, 0o700)
+        # POSIX file modes (0o600/0o700) can't be set on Windows via os.chmod
+        # (Issue 4). The chmod calls stay; only the mode-equality checks skip.
+        if not sys.platform.startswith("win"):
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(path.parent.stat().st_mode & 0o777, 0o700)
 
     def test_cli_brain_writes_three_files(self):
         conn = self.get_conn()

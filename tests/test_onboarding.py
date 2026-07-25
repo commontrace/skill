@@ -5,9 +5,15 @@ import json
 import os
 import subprocess
 import sys
+import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
+
+# POSIX file modes (0o600/0o700) can't be set on Windows via os.chmod, so
+# mode-equality assertions are skipped there (Issue 4). The chmod calls stay.
+_POSIX_ONLY = unittest.skipIf(
+    os.name == "nt", "POSIX file modes not settable on Windows")
 
 from base import HookTestCase
 
@@ -46,6 +52,7 @@ class TestSaveConfig(OnboardingTestCase):
         loaded = session_start.load_config()
         self.assertEqual(loaded, data)
 
+    @_POSIX_ONLY
     def test_file_permissions_0o600(self):
         session_start.save_config({"api_key": "perm_key"})
         mode = session_start.CONFIG_FILE.stat().st_mode & 0o777
@@ -162,8 +169,9 @@ class TestEnsureSetup(OnboardingTestCase):
             session_start.CONFIG_FILE.read_text(encoding="utf-8"))
         self.assertEqual(saved["api_key"], "ct_live_abc")
         self.assertTrue(saved["pending_first_run_notice"])
-        mode = session_start.CONFIG_FILE.stat().st_mode & 0o777
-        self.assertEqual(mode, 0o600)
+        if os.name != "nt":  # POSIX file modes not settable on Windows
+            mode = session_start.CONFIG_FILE.stat().st_mode & 0o777
+            self.assertEqual(mode, 0o600)
 
     def test_env_var_short_circuits_provisioning(self):
         os.environ["COMMONTRACE_API_KEY"] = "env_key"
