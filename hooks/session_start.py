@@ -14,6 +14,7 @@ Never blocks session start — failures degrade to a short notice or silence.
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -22,6 +23,15 @@ import urllib.request
 import uuid
 from pathlib import Path
 
+
+# Resolve the `claude` CLI once at import. On Windows the CLI is an
+# extensionless sh-shim next to a `claude.CMD`/`claude.EXE` launcher;
+# subprocess.run() with a list argv uses CreateProcess, which ignores PATHEXT
+# and so fails to find the extensionless name (FileNotFoundError). shutil.which
+# honours PATHEXT and returns the runnable launcher, so we invoke that resolved
+# path. Falls back to the bare name (POSIX, or if resolution fails) — behaviour
+# there is unchanged.
+CLAUDE_BIN = shutil.which("claude") or "claude"
 
 CONFIG_DIR = Path.home() / ".commontrace"
 CONFIG_FILE = CONFIG_DIR / "config.json"
@@ -203,14 +213,14 @@ def configure_mcp(api_key: str) -> bool:
         # Best-effort remove first (idempotency — ignore all errors)
         try:
             subprocess.run(
-                ["claude", "mcp", "remove", "commontrace", "-s", "user"],
+                [CLAUDE_BIN, "mcp", "remove", "commontrace", "-s", "user"],
                 capture_output=True, text=True, timeout=10,
             )
         except Exception:
             pass  # Remove failure must not prevent add
         result = subprocess.run(
             [
-                "claude", "mcp", "add", "commontrace",
+                CLAUDE_BIN, "mcp", "add", "commontrace",
                 "--transport", "http",
                 MCP_URL,
                 "-H", f"x-api-key: {api_key}",
@@ -219,7 +229,16 @@ def configure_mcp(api_key: str) -> bool:
             capture_output=True, text=True, timeout=10,
         )
         return result.returncode == 0
-    except Exception:
+    except Exception as e:
+        # Was a silent `return False` — on Windows the swallowed error was
+        # invariably a FileNotFoundError from the un-resolved `claude` name,
+        # so every machine reported mcp_configured:false with no diagnostic.
+        # Record it locally (never transmitted) so the failure is findable.
+        try:
+            from session_state import log_hook_error
+            log_hook_error("configure_mcp", e)
+        except Exception:
+            pass
         return False
 
 

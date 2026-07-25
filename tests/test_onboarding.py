@@ -26,6 +26,8 @@ class OnboardingTestCase(HookTestCase):
             (session_start, "PENDING_DIR", self.tmp_path / "pending"),
             (session_start, "PING_MARKER", self.tmp_path / "last_ping_date"),
             (session_state, "STATE_ROOT", self.tmp_path / "state"),
+            (session_state, "HOOK_ERROR_LOG",
+             self.tmp_path / "hook-errors.log"),
         ]:
             patcher = mock.patch.object(target, attr, value)
             patcher.start()
@@ -71,6 +73,41 @@ class TestConfigureMcp(OnboardingTestCase):
                 session_start.subprocess, "run",
                 side_effect=FileNotFoundError("claude not found")):
             self.assertFalse(session_start.configure_mcp("k"))
+
+    def test_resolved_claude_binary_used_at_both_call_sites(self):
+        # Windows: shutil.which resolves the extensionless name to a runnable
+        # launcher via PATHEXT. Both the remove and the add must invoke that
+        # resolved path, never the bare "claude" that CreateProcess can't find.
+        resolved = r"C:\Users\dev\AppData\Roaming\npm\claude.CMD"
+        calls = []
+
+        def fake_run(argv, **kwargs):
+            calls.append(argv)
+            return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+        with mock.patch.object(session_start.shutil, "which",
+                               return_value=resolved), \
+             mock.patch.object(session_start, "CLAUDE_BIN", resolved), \
+             mock.patch.object(session_start.subprocess, "run", fake_run):
+            ok = session_start.configure_mcp("k")
+
+        self.assertTrue(ok)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0][0], resolved)  # remove
+        self.assertEqual(calls[1][0], resolved)  # add
+        self.assertIn("remove", calls[0])
+        self.assertIn("add", calls[1])
+
+    def test_configure_mcp_logs_swallowed_exception(self):
+        with mock.patch.object(
+                session_start.subprocess, "run",
+                side_effect=FileNotFoundError("claude not found")):
+            self.assertFalse(session_start.configure_mcp("k"))
+        log = session_state.HOOK_ERROR_LOG
+        self.assertTrue(log.exists())
+        content = log.read_text(encoding="utf-8")
+        self.assertIn("[configure_mcp]", content)
+        self.assertIn("FileNotFoundError", content)
 
     def test_idempotent_remove_then_add_both_use_commontrace_server_name(self):
         calls = []
