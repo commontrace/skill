@@ -79,6 +79,20 @@ INFRA_PATTERNS = {
 }
 
 
+# Documentation extensions — edits to these are prose, not a code correction.
+_DOCS_EXTENSIONS = {".md", ".markdown", ".mdx", ".rst"}
+
+
+def _is_docs_only(file_path: str) -> bool:
+    """True for documentation/markdown files.
+
+    A markdown edit made after a user turn is almost always the agent writing
+    up notes, not the user redirecting a wrong approach — surfacing it as a
+    high-value ``user_correction`` was noisy and misleading. Exclude docs.
+    """
+    return Path(file_path).suffix.lower() in _DOCS_EXTENSIONS
+
+
 def _is_security_file(file_path: str) -> bool:
     name = Path(file_path).name.lower()
     return any(p in name for p in SECURITY_FILE_PATTERNS)
@@ -227,14 +241,45 @@ def format_results(results: list[dict]) -> str:
     return "\n".join(lines)
 
 
+# Precise failure markers for the exit-code 0/None case. A pipeline's exit
+# code is the LAST command's, so `npx jest | tail` exits 0 even when jest
+# failed — the failure survives only as text. Anchor on strong, specific
+# signals (never the bare word "error", never a "0 failed" summary) so a GREEN
+# run that merely mentions "error" or reports "0 failed" is not misclassified.
+_FAILURE_MARKER_PATTERNS = (
+    re.compile(r'\bFAIL'),                              # jest FAIL, go --- FAIL, pytest FAILED
+    re.compile(r'\bAssertionError\b'),                  # python/unittest
+    re.compile(r'\bTests?:\s*[1-9]\d*\s+failed', re.IGNORECASE),  # jest "Tests: 1 failed"
+    re.compile(r'\b[1-9]\d*\s+failed\b', re.IGNORECASE),          # "1 failed" (not "0 failed")
+    re.compile(r'(?im)^\s*exit code [1-9]'),            # explicit non-zero exit line
+    re.compile(r'(?m)^Error:'),                         # node/js error header (line-anchored)
+    re.compile(r'Traceback \(most recent call last\)'),  # python traceback
+)
+
+
+def _has_failure_marker(output: str, stderr: str) -> bool:
+    """True if combined output+stderr carries a precise failure marker.
+
+    Used only when the exit code is 0 or absent — the case a piped test run
+    (`… | tail`) reports success it didn't earn. Strong markers only, so a
+    passing run is never flagged just for containing the word "error".
+    """
+    combined = f"{output or ''}\n{stderr or ''}"
+    return any(p.search(combined) for p in _FAILURE_MARKER_PATTERNS)
+
+
 def detect_bash_error(data: dict) -> tuple[bool, str, str]:
     """Detect if a Bash command failed using structural signals only.
 
     Checks (in order):
-    1. Exit code field in tool_response (most reliable)
-    2. Presence of stderr content (structural — stderr is for errors)
-    3. If tool_response is a plain string, we cannot structurally
-       determine error vs success — default to not-error.
+    1. Non-zero exit code in tool_response (most reliable).
+    2. Exit code 0 or None: scan combined output+stderr for precise failure
+       markers (catches piped failures whose exit code is the pipe's last
+       command). NON-empty stderr is NOT treated as failure on a clean exit —
+       jest/pytest/cargo/go/npm/git all write NORMAL output to stderr on a
+       GREEN run, so the old "stderr = error" rule stored passing runs as
+       errors and never recorded a resolution (fail→succeed could never fire).
+    3. Exit code None with no marker: fall back to the Unix stderr convention.
 
     Returns: (is_error, output_text, error_text_for_search)
     """
@@ -246,13 +291,23 @@ def detect_bash_error(data: dict) -> tuple[bool, str, str]:
         exit_code = tool_response.get("exitCode",
                     tool_response.get("exit_code"))
 
-        # Non-zero exit code is the clearest structural signal
+        # 1. Non-zero exit code is the clearest structural signal.
         if exit_code is not None and exit_code != 0:
             # Use stderr if available, otherwise tail of output
             error_text = stderr if stderr else output[-500:]
             return True, output, strip_harness_noise(error_text)
 
-        # Stderr with content = error (by Unix convention)
+        # 2. Exit code is 0 or None — scan for precise failure markers so a
+        #    piped test run that "succeeded" via tail/head is still caught.
+        if _has_failure_marker(output, stderr):
+            return True, output, strip_harness_noise((stderr or output)[-500:])
+
+        # Explicit success (exit 0): trust it. Non-empty stderr on a clean
+        # exit is normal tool chatter, NOT an error.
+        if exit_code == 0:
+            return False, output or stderr, ""
+
+        # 3. Exit code unknown (None) and no marker: Unix stderr convention.
         if stderr and stderr.strip():
             return True, output, strip_harness_noise(stderr[-500:])
 
@@ -268,6 +323,11 @@ def detect_bash_error(data: dict) -> tuple[bool, str, str]:
         exit_match = re.search(r'exit\s*code[:\s]+(\d+)', output[-100:],
                                re.IGNORECASE)
         if exit_match and int(exit_match.group(1)) != 0:
+            return True, output, strip_harness_noise(output[-500:])
+
+        # Piped failure captured as a plain string (exit code hidden) — the
+        # marker scan still catches it without over-firing on a passing run.
+        if _has_failure_marker(output, ""):
             return True, output, strip_harness_noise(output[-500:])
 
         return False, output, ""
@@ -802,7 +862,9 @@ def _detect_knowledge_candidates(tool_name: str, data: dict,
     if tool_name in ("Write", "Edit", "NotebookEdit"):
         ti = data.get("tool_input", {})
         file_path = ti.get("file_path", "") if isinstance(ti, dict) else ""
-        if file_path:
+        # Skip docs-only (*.md) edits — re-touching a markdown file across a
+        # user turn is note-writing, not a redirected approach.
+        if file_path and not _is_docs_only(file_path):
             user_turns = read_events(state_dir, "user_turns.jsonl")
             changes = read_events(state_dir, "changes.jsonl")
             if user_turns and len(changes) >= 2:
