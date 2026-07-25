@@ -26,6 +26,15 @@ import sys
 import time
 from pathlib import Path
 
+# Defensive (Issue 9): hook payloads arrive as UTF-8 JSON on stdin, but some
+# Windows consoles default stdin to cp1252 and mangle non-ASCII into mojibake
+# before we parse it. Force UTF-8 with errors="replace" (root cause is likely
+# the upstream harness console). Guarded — no-op on POSIX / redirected streams.
+try:
+    sys.stdin.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 sys.path.insert(0, str(Path(__file__).parent))
 from session_state import (
     get_state_dir, append_event, read_events, is_config_file,
