@@ -164,7 +164,14 @@ def _contribution_directive(candidate: dict, auto_mode: bool,
             "trace to https://api.commontrace.org/api/v1/traces with header "
             '"X-API-Key: <key>" and a JSON body containing title, context_text, '
             "solution_text, tags, and "
-            f"metadata_json={meta_json}; take the returned id"
+            f"metadata_json={meta_json}; capture the HTTP status. If the status "
+            "is 403 (invitation gate — this account cannot publish yet), do NOT "
+            "print any receipt and do NOT claim success: show the invitation "
+            "message from the response body and state plainly that nothing was "
+            "contributed — publishing needs an invitation code (redeem via POST "
+            "/api/v1/invitations/redeem), while reading and search stay open to "
+            "everyone and the work is still captured locally. Otherwise take the "
+            "returned id"
         )
         if auto_mode:
             return base + (

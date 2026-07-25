@@ -33,12 +33,13 @@ No account, no email, no environment variables, no decisions.
 
 - **At session start:** a search using only your project's **language/framework tag** (e.g. `python`) — **no code, no file contents, no prompts** — to fetch relevant fixes.
 - **Contributions:** nothing is shared automatically by default. When you solve something worth keeping, you're **asked first**; the contribution is a **secret-redacted** title/problem/solution summary plus aggregate metadata (minutes, error count, token estimate) — **no transcripts, no file dumps**. Choose **Always** at the prompt (or set `auto_contribute: true` in `~/.commontrace/config.json`) to enable passive auto-contribution thereafter.
+- **Publishing needs an invitation.** Reading and `/recall` search are open to everyone, and your work is always captured in the local store — but **publishing a trace to the shared commons requires an invitation code**. An un-invited anonymous account gets an **HTTP 403** with an invitation notice when it tries to publish; the skill surfaces that message and does **not** claim success. Redeem a code with `POST /api/v1/invitations/redeem`, then contribute normally.
 - **Stays local, never sent:** `~/.commontrace/local.db` (aggregate counters and trace pointers only).
 - **Scope:** the MCP server registers at **user scope**, so it's active across all your repos. Remove it per the Uninstall section if you don't want that on client work.
 
 ### Use your own account instead (optional)
 
-Anonymous accounts are fully functional — search and contribution included. Register with a real email only if you want a stable identity across machines:
+Anonymous accounts can read and search freely and capture work locally; **publishing to the shared commons requires an invitation code** (see [Publishing needs an invitation](#what-leaves-your-machine-and-when) above). Register with a real email if you want a stable identity across machines:
 
 ```bash
 curl -s -X POST https://api.commontrace.org/api/v1/keys \

@@ -32,16 +32,21 @@ Contribute one trace to CommonTrace. Work silently; return only what step 6 spec
      (`<dur>` = human duration from minutes; `<money>` = tokens/1e6*5). Then stop.
    - If `True` → continue.
 
-4. **Post it.**
+4. **Post it — and capture the HTTP status.**
    `H="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/hooks}"; [ -d "$H" ] || H="$(dirname "$(readlink -f ~/.claude/commands/trace.md)")/../hooks"`
    `KEY=$(python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.commontrace/config.json')))['api_key'])")`
-   Build the JSON body in python (avoid shell escaping) and `curl -s -X POST https://api.commontrace.org/api/v1/traces -H "X-API-Key: $KEY" -H "Content-Type: application/json"` with body
-   `{"title":…,"context_text":…,"solution_text":…,"tags":[…],"metadata_json":{"detection_pattern":"user_directed","time_to_resolution_minutes":<m>,"error_count":<e>,"tokens_to_resolution":<t>}}`. Parse the `id`.
+   Build the JSON body in python (avoid shell escaping) and POST with the status code appended so you can branch on it:
+   `curl -s -w $'\n%{http_code}' -X POST https://api.commontrace.org/api/v1/traces -H "X-API-Key: $KEY" -H "Content-Type: application/json" -d "$BODY"`
+   with body `{"title":…,"context_text":…,"solution_text":…,"tags":[…],"metadata_json":{"detection_pattern":"user_directed","time_to_resolution_minutes":<m>,"error_count":<e>,"tokens_to_resolution":<t>}}`. The **last line** of the output is the HTTP status; everything before it is the response body.
+   - **If the status is `403`** (invitation gate — anonymous/un-invited accounts cannot publish): do **NOT** render a receipt and do **NOT** claim success. Return the invitation `detail`/message from the response body verbatim, followed by exactly this line:
+     `Not contributed — publishing to CommonTrace needs an invitation code. Redeem one with: curl -s -X POST https://api.commontrace.org/api/v1/invitations/redeem -H "X-API-Key: $KEY" -H "Content-Type: application/json" -d '{"code":"<your-code>"}'  — then rerun /trace. (Reading and /recall search stay open to everyone; your work is still captured locally.)`
+     Then stop.
+   - **Otherwise** parse the `id` from the body and continue.
 
 5. **Render the receipt:**
    `python3 "$H/artifacts.py" banner mode=contributed title="<title>" where="<where>" minutes=<m> errors=<e> tokens=<t> id="$ID"`
 
-6. **Return ONLY** the rendered receipt exactly as printed, then a final line `→ https://commontrace.org/t/<id>`. If the POST returns no id, return only `CommonTrace error: <response body>`. No commentary, no summary.
+6. **Return ONLY** the rendered receipt exactly as printed, then a final line `→ https://commontrace.org/t/<id>`. If the POST returned no id and the status was not the 403 handled in step 4, return only `CommonTrace error: <response body>`. No commentary, no summary.
 
 ---
 
@@ -50,3 +55,4 @@ Contribute one trace to CommonTrace. Work silently; return only what step 6 spec
 - The main thread does no drafting, no file reads, no Bash — only the Task spawn (and the approval prompt if asked for).
 - Never contribute without `Yes` / `Always`, unless `auto_contribute` is already `true`.
 - Never include secrets / credentials / PII.
+- On HTTP 403, never claim a contribution happened. Show the invitation notice and say plainly that nothing was published. Reading and `/recall` search remain open to everyone; the work is still captured in the local store.

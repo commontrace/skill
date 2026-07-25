@@ -56,6 +56,17 @@ class ContributionDirectiveTests(unittest.TestCase):
     def test_bad_candidate_returns_none_not_crash(self):
         self.assertIsNone(stop._contribution_directive(None, True, "/h"))
 
+    def test_directive_surfaces_403_invitation_gate(self):
+        # Issue 7: an un-invited anonymous account gets 403 on publish. The
+        # directive must tell the agent to surface the invitation notice and
+        # NOT claim success — in both auto and manual mode.
+        for auto in (True, False):
+            d = stop._contribution_directive(CAND, auto, "/hooks")
+            self.assertIn("403", d)
+            self.assertIn("invitation", d.lower())
+            self.assertIn("not", d.lower())  # "nothing was contributed"
+            self.assertIn("invitations/redeem", d)
+
 
 if __name__ == "__main__":
     unittest.main()
