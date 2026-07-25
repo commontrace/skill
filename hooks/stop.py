@@ -42,6 +42,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from session_state import get_state_dir, read_events, read_counter, log_hook_error
+from redact import redact_text, strip_harness_noise
 
 
 RESOLUTION_DIR = Path.home() / ".commontrace" / "resolutions"
@@ -610,10 +611,17 @@ def _build_journey_context(state_dir: Path) -> dict:
 
     journey: dict = {}
 
-    # Error messages — first 200 chars of each error tail (up to 5)
+    # Error messages — first 200 chars of each error tail (up to 5).
+    # Single choke point before transmission: redact + strip harness noise
+    # here regardless of upstream state, so anything that reached errors.jsonl
+    # unscrubbed (e.g. a tool-failure "error" field) can't leak into the
+    # contribution payload. Redact BEFORE truncating. Covers both the Bash
+    # "output_tail" key and the tool-failure "error" key.
     if errors:
         journey["error_messages"] = [
-            e.get("output_tail", "")[:200] for e in errors[:5]
+            strip_harness_noise(redact_text(
+                e.get("output_tail") or e.get("error") or ""))[:200]
+            for e in errors[:5]
         ]
 
     # Successful commands (up to 5)
@@ -800,10 +808,13 @@ def _build_candidate(score: float, top_pattern: str, evidence: dict,
     journey_ctx = _build_journey_context(state_dir)
     ctx_fp = _read_context_fingerprint(state_dir)
 
-    # Include error_message in metadata — earns +1 depth_score at API
+    # Include error_message in metadata — earns +1 depth_score at API.
+    # Same transmission boundary as the journey error_messages: redact +
+    # strip before it rides along in metadata_json. Redact before truncating.
     first_error_tail = ""
     if errors:
-        first_error_tail = errors[0].get("output_tail", "")[:200]
+        first_error_tail = strip_harness_noise(redact_text(
+            errors[0].get("output_tail") or errors[0].get("error") or ""))[:200]
 
     metadata_parts = [
         f'"detection_pattern": "{top_pattern}"',
