@@ -99,6 +99,24 @@ EXTENSION_TO_LANGUAGE = {
 }
 
 
+def _log_swallowed(where: str, exc: BaseException) -> None:
+    """Best-effort local log of a swallowed status-bearing failure.
+
+    Session start must never crash, so its network / config-write / db paths
+    are wrapped in broad excepts. Silence, though, hid real degradation: a
+    failed key provisioning, an unwritable config, or an unreachable API all
+    reported "success while doing nothing". This routes those swallows to the
+    local-only ~/.commontrace/hook-errors.log without changing behavior. The
+    import is lazy + guarded so a session_state problem can never turn logging
+    itself into the thing that breaks the hook.
+    """
+    try:
+        from session_state import log_hook_error
+        log_hook_error(where, exc)
+    except Exception:
+        pass
+
+
 def load_config() -> dict:
     """Load stored config or return empty dict."""
     if CONFIG_FILE.exists():
@@ -131,7 +149,11 @@ def save_config(config: dict) -> None:
                 pass
             raise
         os.replace(tmp_path, CONFIG_FILE)
-    except OSError:
+    except OSError as e:
+        # Status-bearing: a failed config write means the API key never
+        # persists → re-provision (orphan anonymous account) every session.
+        # Single choke point for all callers — log the failure, don't crash.
+        _log_swallowed("save_config", e)
         return
 
 
@@ -155,7 +177,11 @@ def provision_api_key() -> str | None:
         with urllib.request.urlopen(req, timeout=5) as response:
             data = json.loads(response.read())
             return data.get("api_key")
-    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, OSError):
+    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, OSError) as e:
+        # Status-bearing network POST. Caller degrades to the one-time setup
+        # notice, but WHY provisioning failed (offline vs HTTP 4xx vs bad JSON)
+        # vanished — log it locally so recurring failures are diagnosable.
+        _log_swallowed("provision_api_key", e)
         return None
 
 
@@ -176,7 +202,11 @@ def _post_json(path: str, payload: dict, api_key: str, timeout: float = 3.0) -> 
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return 200 <= resp.status < 300
-    except Exception:
+    except Exception as e:
+        # Telemetry POST (install beacon / daily ping). User-facing silence is
+        # deliberate, but a swallowed failure previously left no diagnostic at
+        # all — log it locally (never transmitted); still return False.
+        _log_swallowed(f"post_json {path}", e)
         return False
 
 
@@ -510,7 +540,12 @@ def search_commontrace(query: str, language: str, api_key: str,
         with urllib.request.urlopen(req, timeout=3) as response:
             data = json.loads(response.read())
             return data.get("results", [])
-    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, OSError):
+    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, OSError) as e:
+        # Status-bearing network POST. An empty list here is indistinguishable
+        # from "no matches" downstream — the classic silent-success trap — so a
+        # failed search silently degrades session-start injection. Log the real
+        # cause locally; still return [] so the hook proceeds.
+        _log_swallowed("search_commontrace", e)
         return []
 
 
@@ -572,7 +607,10 @@ def _compiled_drop(config):
             conn.close()
         if text:
             path = write_artifact(f"compiled-{year}-{month:02d}.txt", text)
-    except Exception:
+    except Exception as e:
+        # Status-bearing: reads local.db and writes the recap artifact. A
+        # swallowed failure silently drops the monthly Compiled recap — log it.
+        _log_swallowed("compiled_drop", e)
         return None
     # Fix I1: Re-load config from disk before writing the marker to avoid
     # overwriting flags written by other hooks between session_start's
@@ -734,7 +772,12 @@ def main() -> None:
             pass
 
         conn.close()
-    except Exception:
+    except Exception as e:
+        # Status-bearing: registers the project, opens the session, and writes
+        # the context/savings bridge files off local.db. A swallowed failure
+        # silently disables context fingerprinting + savings recap for the
+        # session — log it (behavior unchanged: context_dict stays None).
+        _log_swallowed("session_start_local_store", e)
         context_dict = None
 
     # Step 3: Search CommonTrace (with context if available)

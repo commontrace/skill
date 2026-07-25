@@ -92,8 +92,12 @@ def _write_pending(session_key: str, payload: dict) -> None:
             os.chmod(path, 0o600)
         except OSError:
             pass
-    except OSError:
-        pass
+    except OSError as e:
+        # Status-bearing: this is the durable fallback that keeps a scored
+        # contribution candidate (and amend prompts) from being lost when the
+        # directive path can't run. A silent write failure means the candidate
+        # vanishes with no signal — log it locally (behavior unchanged).
+        log_hook_error("write_pending", e)
 
 
 def _struggle_artifact(candidate, state_dir, trace_id=""):
@@ -115,6 +119,9 @@ def _struggle_artifact(candidate, state_dir, trace_id=""):
         write_artifact("last-struggle.txt", line + "\n")
         return line
     except Exception:
+        # Intentionally silent: the struggle grid is a cosmetic artifact. If it
+        # can't render there is nothing to diagnose and nothing is lost — the
+        # contribution flow does not depend on it. Not a status-bearing swallow.
         return None
 
 

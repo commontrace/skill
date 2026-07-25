@@ -232,7 +232,12 @@ def search_commontrace(query: str, api_key: str,
             data = json.loads(response.read())
             return data.get("results", [])
     except (urllib.error.URLError, urllib.error.HTTPError,
-            json.JSONDecodeError, OSError):
+            json.JSONDecodeError, OSError) as e:
+        # Status-bearing network POST (domain-entry knowledge search). An empty
+        # list is indistinguishable from "no matches" to the caller — the
+        # silent-success trap — so a failed search silently drops the injection.
+        # Log the real cause locally; still return [] so the hook proceeds.
+        log_hook_error("search_commontrace", e)
         return []
 
 

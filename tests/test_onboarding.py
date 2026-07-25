@@ -6,6 +6,8 @@ import os
 import subprocess
 import sys
 import unittest
+import urllib.error
+import urllib.request
 from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
@@ -17,8 +19,10 @@ _POSIX_ONLY = unittest.skipIf(
 
 from base import HookTestCase
 
+import post_tool_use
 import session_start
 import session_state
+import stop
 
 
 class OnboardingTestCase(HookTestCase):
@@ -334,3 +338,67 @@ class TestFirstRunNotice(OnboardingTestCase):
         saved = json.loads(
             session_start.CONFIG_FILE.read_text(encoding="utf-8"))
         self.assertTrue(saved["pending_first_run_notice"])
+
+
+class TestSilentSuccessSweep(OnboardingTestCase):
+    """Status-bearing swallows log to hook-errors.log instead of vanishing.
+
+    Reviewer cross-cutting note: a swallowed network POST / config write / db
+    write that "reports success while doing nothing" must degrade LOUDLY.
+    Behavior is unchanged — each path still returns its degraded value; only
+    the silence is removed. OnboardingTestCase redirects HOOK_ERROR_LOG into
+    the temp dir, so none of these touch the real ~/.commontrace.
+    """
+
+    def _log_text(self) -> str:
+        log = session_state.HOOK_ERROR_LOG
+        return log.read_text(encoding="utf-8") if log.exists() else ""
+
+    def test_provision_api_key_logs_network_failure(self):
+        with mock.patch.object(
+                session_start.urllib.request, "urlopen",
+                side_effect=urllib.error.URLError("offline")):
+            self.assertIsNone(session_start.provision_api_key())
+        self.assertIn("[provision_api_key]", self._log_text())
+
+    def test_post_json_telemetry_logs_failure_with_path(self):
+        with mock.patch.object(
+                session_start.urllib.request, "urlopen",
+                side_effect=OSError("boom")):
+            ok = session_start._post_json(
+                "/api/v1/telemetry/ping", {}, "k", timeout=1.0)
+        self.assertFalse(ok)
+        self.assertIn("[post_json /api/v1/telemetry/ping]", self._log_text())
+
+    def test_session_start_search_logs_network_failure(self):
+        with mock.patch.object(
+                session_start.urllib.request, "urlopen",
+                side_effect=urllib.error.URLError("offline")):
+            results = session_start.search_commontrace("q", "python", "k")
+        self.assertEqual(results, [])
+        self.assertIn("[search_commontrace]", self._log_text())
+
+    def test_save_config_logs_write_failure(self):
+        # A failed config write silently drops the API key → re-provision every
+        # session. Force the atomic os.replace to fail; the failure must log.
+        with mock.patch.object(
+                session_start.os, "replace", side_effect=OSError("disk full")):
+            session_start.save_config({"api_key": "k"})
+        self.assertIn("[save_config]", self._log_text())
+
+    def test_post_tool_use_search_logs_network_failure(self):
+        with mock.patch.object(
+                urllib.request, "urlopen",
+                side_effect=urllib.error.URLError("offline")):
+            results = post_tool_use.search_commontrace("q", "k")
+        self.assertEqual(results, [])
+        self.assertIn("[search_commontrace]", self._log_text())
+
+    def test_write_pending_logs_persist_failure(self):
+        # _write_pending is the durable fallback for a scored contribution
+        # candidate. A regular file as the parent makes mkdir() raise OSError.
+        blocker = self.tmp_path / "blocker"
+        blocker.write_text("x", encoding="utf-8")
+        with mock.patch.object(stop, "PENDING_DIR", blocker / "pending"):
+            stop._write_pending("sess", {"kind": "score"})
+        self.assertIn("[write_pending]", self._log_text())
