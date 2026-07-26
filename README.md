@@ -154,12 +154,6 @@ it per-project — e.g. a demo repo's `.claude/settings.json` sets
 The trace is always authored from the **current session only** — never
 fabricated from stale or empty context.
 
-## Related Repositories
-
-- [commontrace/server](https://github.com/commontrace/server) — API backend
-- [commontrace/mcp](https://github.com/commontrace/mcp) — MCP server
-- [commontrace/frontend](https://github.com/commontrace/frontend) — Website
-
 ## License
 
 [Apache-2.0](LICENSE)
