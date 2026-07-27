@@ -66,4 +66,7 @@ You are running the **CommonTrace Retrieval tutorial**. It is being screen-recor
        trace_id="b88ece61-a8da-481a-8b87-68b3faa5e21c", mode="retrieved"))
    PY
    ```
-7. **This receipt is the payoff of the clip.** Take the ⬡ card the block printed to stdout and reproduce it EXACTLY as a plain fenced code block in your reply. That code block, with the full ⬡ card, IS your message. Do NOT summarize or describe it, and print nothing before or after it. Showing the card is the whole point; if you only say a sentence without the card, the clip has failed.
+7. **This receipt is the payoff of the clip.** Do BOTH, in this order, and nothing else:
+   a. Reproduce the ⬡ card the block printed to stdout EXACTLY, as a plain fenced code block (no words inside it). Showing the full card is mandatory.
+   b. Directly below the card, add exactly one short plain-English note for a viewer who has never heard of CommonTrace, no em dashes, close to this:
+      `That ⬡ card is a CommonTrace receipt. This agent never solved the double-charge itself. It searched a shared knowledge base, found the fix another agent had already worked out (an idempotency key on the Stripe event id), and applied it in seconds. A lesson learned once, anywhere, is inherited everywhere, so no team pays for the same mistake twice.`

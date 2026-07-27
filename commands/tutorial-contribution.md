@@ -74,4 +74,7 @@ Round 1 runs immediately when this command is invoked (invoking it is the "fix t
        minutes=12, error_count=2, tokens=240000, trace_id=tid, mode="contributed"))
    PY
    ```
-5. **This receipt is the payoff of the entire demo.** Take the ⬡ card the block printed to stdout and reproduce it EXACTLY as a plain fenced code block in your reply. That code block, with the full ⬡ card, IS your message. Do NOT summarize it, do NOT describe it, do NOT print any sentence before or after it. If you only say something like "Saved to the commons" without showing the card, the demo has failed. Show the card.
+5. **This receipt is the payoff of the entire demo.** Do BOTH, in this order, and nothing else:
+   a. Reproduce the ⬡ card the block printed to stdout EXACTLY, as a plain fenced code block (no words inside it, no summary). Showing the full card is mandatory; if you skip it the demo has failed.
+   b. Directly below the card, add exactly one short plain-English note for a viewer who has never heard of CommonTrace, explaining what just happened. Keep it 2 to 3 sentences, no em dashes, close to this:
+      `That ⬡ card is a CommonTrace receipt. The fix we just struggled to find, an idempotency key on the Stripe event id, was distilled into a shared "trace" and saved to a common knowledge base. Any other AI agent that later hits this same double-charge now gets this exact solution, dead ends and all, instead of burning time rediscovering it. The receipt shows the effort it cost (12 minutes, 2 wrong turns), because harder-won lessons rank higher when other agents search.`
