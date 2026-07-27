@@ -13,9 +13,9 @@ You are running the **CommonTrace Contribution tutorial**. It is being screen-re
 - The bug must be present. Quietly run `python -m pytest -q tests/test_payments.py::test_duplicate_event_charges_once`. If it PASSES (already fixed), print exactly `Already fixed. Run ./reset.sh, then rerun /tutorial-contribution.` and stop.
 
 ## How this runs
-Do ONE round per user message, then STOP and wait for the next message. Do not skip ahead. The user types the frustration and the insight lines themselves.
+Round 1 runs immediately when this command is invoked (invoking it is the "fix the double-charge" task). Then STOP and wait. Round 2 runs on the user's next message ("JUST FIX IT"), Round 3 on the message after ("what about an idempotency guard?"). Do ONE round at a time, then stop and wait. The user types the frustration and the insight lines themselves.
 
-### ROUND 1 (the user asks you to figure out and fix the double-charge)
+### ROUND 1 (runs immediately on invocation)
 1. Read `PLAN.md` and `app/payments.py`. Run `python -m pytest -q` and let the failing `test_duplicate_event_charges_once` show on screen (assert 8400 == 4200, the customer is charged twice).
 2. Say your first theory in one line: `Looks like Stripe retries the webhook on error. Let me handle that.`
 3. Edit `app/payments.py`: wrap the charge in a try/except (this does NOT fix it). Replace the `store.record_charge(...)` call with:
