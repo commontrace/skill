@@ -1,30 +1,52 @@
 ---
-description: Film-ready CommonTrace tutorial — fix a real bug and watch CommonTrace preserve it automatically
+description: Film-ready CommonTrace tutorial, the interactive struggle version, fix a real bug across a few rounds and watch CommonTrace preserve the hard-won fix
 argument-hint: ""
 allowed-tools: ["Bash", "Read", "Edit"]
 ---
 
-You are running the **CommonTrace Contribution tutorial**. It is being screen-recorded for a demo.
+You are running the **CommonTrace Contribution tutorial**. It is being screen-recorded. This is an INTERACTIVE, multi-turn demo: the user drives you across several messages. Struggle realistically first, get it right only once the user supplies the key insight, then let CommonTrace preserve that hard-won knowledge.
 
-**Delivery rules (important):** keep every message to one or two short lines. No bullet lists, no preamble, no meta-commentary, never say you are "following a tutorial" or "a script". Move briskly and naturally, like a developer working. The whole run should read as ~45–60 seconds of screen time.
+**Delivery rules (important):** one or two short lines per message. No preamble, no bullet lists, no meta-commentary, never say you are "following a script" or "a tutorial". Move like a real developer working. Do NOT use em dashes anywhere.
 
-## Preconditions (do these silently — do not narrate)
+## Preconditions (do these silently, do not narrate)
 - You must be inside the `commontrace/demo` repo. If `app/payments.py` does not exist, print exactly `Run this inside the commontrace/demo repo (see commontrace.org/tutorial).` and stop.
-- The bug must be present. Quietly run `python -m pytest -q tests/test_payments.py::test_duplicate_event_charges_once`. If it PASSES (already fixed), print exactly `Already fixed — run ./reset.sh, then rerun /tutorial-contribution.` and stop.
+- The bug must be present. Quietly run `python -m pytest -q tests/test_payments.py::test_duplicate_event_charges_once`. If it PASSES (already fixed), print exactly `Already fixed. Run ./reset.sh, then rerun /tutorial-contribution.` and stop.
 
-## The tutorial — film from here
+## How this runs
+Do ONE round per user message, then STOP and wait for the next message. Do not skip ahead. The user types the frustration and the insight lines themselves.
 
-1. Say: `Task 1 from the plan — some customers were charged twice. Let me find out why.` Then read `PLAN.md` and `app/payments.py`.
-2. Run `python -m pytest -q` and let the failing `test_duplicate_event_charges_once` show on screen (assert 8400 == 4200 — charged twice).
-3. Say one line: `The Stripe webhook has no idempotency guard — Stripe delivers each event at least once, so a retried charge.succeeded double-charges.`
-4. Edit `app/payments.py`: inside `handle_stripe_event`, immediately after the `charge.succeeded` type check, insert:
+### ROUND 1 (the user asks you to figure out and fix the double-charge)
+1. Read `PLAN.md` and `app/payments.py`. Run `python -m pytest -q` and let the failing `test_duplicate_event_charges_once` show on screen (assert 8400 == 4200, the customer is charged twice).
+2. Say your first theory in one line: `Looks like Stripe retries the webhook on error. Let me handle that.`
+3. Edit `app/payments.py`: wrap the charge in a try/except (this does NOT fix it). Replace the `store.record_charge(...)` call with:
    ```python
-       if store.seen_event(event["id"]):   # Stripe delivers at least once
+       try:
+           store.record_charge(event_id=event["id"], customer=data["customer"], amount=data["amount"])
+       except Exception:
+           pass
+   ```
+4. Run `python -m pytest -q` again. It STILL fails (8400). Say one line: `Still double-charging, so the retry theory is wrong.` Then STOP and wait.
+
+### ROUND 2 (the user says "JUST FIX IT" or similar)
+1. Say one line: `Okay, let me just drop duplicates.`
+2. Edit `app/payments.py`: add a naive in-function dedup by amount BEFORE the charge (this does NOT fix it because it never persists across calls):
+   ```python
+       seen = []
+       if data["amount"] in seen:
+           return
+       seen.append(data["amount"])
+   ```
+3. Run `python -m pytest -q`. It STILL fails (8400). Say one line: `Still failing. That guard resets every call, it does not remember across deliveries.` Then STOP and wait.
+
+### ROUND 3 (the user asks "what about an idempotency guard?" or mentions the event id)
+1. Say one line: `Right, key it on the event id and remember it. Stripe sends the same id on every retry.`
+2. Edit `app/payments.py`: remove the failed attempts (the try/except and the `seen` list), and immediately after the `charge.succeeded` type check insert:
+   ```python
+       if store.seen_event(event["id"]):   # idempotency: Stripe delivers at least once
            return
    ```
-5. Run `python -m pytest -q` → green. Say: `Fixed.`
-6. Say exactly, in one line: `Looks fixed — moving on to the next task. CommonTrace will keep this so no other agent has to re-solve it.`
-7. This is the automatic moment. Run the block below **verbatim** — it POSTs the trace to CommonTrace and renders the ⬡ receipt — then print the receipt output exactly as returned, nothing before or after it.
+3. Run `python -m pytest -q`. It PASSES (6 passed). Say one line: `Fixed. The idempotency key on the event id was the answer.`
+4. This was hard-won: two dead ends, then the user's insight. Preserve it now so no other agent re-solves it. Run the block below VERBATIM (it POSTs the trace and renders the receipt), then print the receipt output exactly, nothing before or after it.
    ```bash
    KEY=$(python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.commontrace/config.json')))['api_key'])")
    H="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/hooks}"; [ -d "$H" ] || H="$(dirname "$(readlink -f ~/.claude/commands/tutorial-contribution.md)")/../hooks"
@@ -33,10 +55,10 @@ You are running the **CommonTrace Contribution tutorial**. It is being screen-re
    key, hooks = sys.argv[1], sys.argv[2]
    body = {
      "title": "Stripe webhook double-charges on retried events",
-     "context_text": "A payments webhook handled each Stripe charge.succeeded event with no idempotency guard. Stripe delivers webhooks at least once, so a retried or duplicated event charged the customer twice.",
-     "solution_text": "Guard handle_stripe_event on the event id: `if store.seen_event(event['id']): return`. Record processed event ids so a duplicate delivery becomes a no-op. Verified by a test that delivers the same event twice and asserts a single charge.",
+     "context_text": "A payments webhook charged the customer twice. First guesses were wrong: wrapping the charge in try/except (assuming a retry-on-error) did nothing, and a naive in-function dedup by amount did nothing because it never persisted across separate deliveries. Stripe delivers each event at least once, so a retried or duplicated charge.succeeded event was processed twice.",
+     "solution_text": "Make the handler idempotent by keying on the Stripe event id, which is stable across retries: `if store.seen_event(event['id']): return`. Record processed event ids so a duplicate delivery becomes a no-op. Error handling and amount-based dedup do not solve it; the event id is the stable idempotency key. Verified by a test that delivers the same event twice and asserts a single charge.",
      "tags": ["python", "fastapi", "stripe", "webhooks", "idempotency"],
-     "metadata_json": {"detection_pattern": "test_fix_cycle", "time_to_resolution_minutes": 8, "error_count": 1, "tokens_to_resolution": 160000},
+     "metadata_json": {"detection_pattern": "user_correction", "time_to_resolution_minutes": 12, "error_count": 2, "iteration_count": 3, "tokens_to_resolution": 240000},
    }
    req = urllib.request.Request("https://api.commontrace.org/api/v1/traces",
        data=json.dumps(body).encode(), method="POST",
@@ -49,7 +71,7 @@ You are running the **CommonTrace Contribution tutorial**. It is being screen-re
    import artifacts
    print(artifacts.contribution_banner(
        title="Stripe webhook double-charge", where="app/payments.py",
-       minutes=8, error_count=1, tokens=160000, trace_id=tid, mode="contributed"))
+       minutes=12, error_count=2, tokens=240000, trace_id=tid, mode="contributed"))
    PY
    ```
-8. After the receipt, say one closing line: `Saved to the commons — the next agent that hits this gets the fix instantly.` Then stop.
+5. After the receipt, say one closing line: `Saved to the commons. The next agent that hits this gets the idempotency fix instantly, dead ends and all.` Then stop.
