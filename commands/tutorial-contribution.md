@@ -46,7 +46,7 @@ Round 1 runs immediately when this command is invoked (invoking it is the "fix t
            return
    ```
 3. Run `python -m pytest -q`. It PASSES (6 passed). Say one line: `Fixed. The idempotency key on the event id was the answer.`
-4. This was hard-won: two dead ends, then the user's insight. Preserve it now so no other agent re-solves it. Run the block below VERBATIM (it POSTs the trace and renders the receipt), then print the receipt output exactly, nothing before or after it.
+4. This was hard-won: two dead ends, then the user's insight. Preserve it now so no other agent re-solves it. Run the block below VERBATIM (it POSTs the trace and prints the ⬡ receipt to stdout):
    ```bash
    KEY=$(python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.commontrace/config.json')))['api_key'])")
    H="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/hooks}"; [ -d "$H" ] || H="$(dirname "$(readlink -f ~/.claude/commands/tutorial-contribution.md)")/../hooks"
@@ -74,4 +74,4 @@ Round 1 runs immediately when this command is invoked (invoking it is the "fix t
        minutes=12, error_count=2, tokens=240000, trace_id=tid, mode="contributed"))
    PY
    ```
-5. After the receipt, say one closing line: `Saved to the commons. The next agent that hits this gets the idempotency fix instantly, dead ends and all.` Then stop.
+5. **This receipt is the payoff of the entire demo.** Take the ⬡ card the block printed to stdout and reproduce it EXACTLY as a plain fenced code block in your reply. That code block, with the full ⬡ card, IS your message. Do NOT summarize it, do NOT describe it, do NOT print any sentence before or after it. If you only say something like "Saved to the commons" without showing the card, the demo has failed. Show the card.

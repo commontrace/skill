@@ -54,7 +54,7 @@ You are running the **CommonTrace Retrieval tutorial**. It is being screen-recor
            return
    ```
 5. Run `python -m pytest -q` → green. Say: `Fixed in seconds — reused, not re-solved.`
-6. Render the retrieved receipt. Run the block below **verbatim** and print its output exactly:
+6. Render the retrieved receipt. Run the block below **verbatim** (it prints the ⬡ receipt to stdout):
    ```bash
    H="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/hooks}"; [ -d "$H" ] || H="$(dirname "$(readlink -f ~/.claude/commands/tutorial-retrieval.md)")/../hooks"
    python3 - "$H" <<'PY'
@@ -66,4 +66,4 @@ You are running the **CommonTrace Retrieval tutorial**. It is being screen-recor
        trace_id="b88ece61-a8da-481a-8b87-68b3faa5e21c", mode="retrieved"))
    PY
    ```
-7. Closing line: `That fix came from the commons — no re-work, no lost knowledge.` Then stop.
+7. **This receipt is the payoff of the clip.** Take the ⬡ card the block printed to stdout and reproduce it EXACTLY as a plain fenced code block in your reply. That code block, with the full ⬡ card, IS your message. Do NOT summarize or describe it, and print nothing before or after it. Showing the card is the whole point; if you only say a sentence without the card, the clip has failed.
