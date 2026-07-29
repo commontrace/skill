@@ -41,7 +41,8 @@ You are running the **CommonTrace Retrieval tutorial**. It is being screen-recor
 3. **Fallback — explicit search (only if step 2 printed NO_SPONTANEOUS_HIT).** Run verbatim; it prints only the match (clean for the recording):
    ```bash
    KEY=$(python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.commontrace/config.json')))['api_key'])")
-   curl -s -X POST https://api.commontrace.org/api/v1/traces/search \
+   BASE="${COMMONTRACE_API_BASE_URL:-https://api.commontrace.org}"
+   curl -s -X POST "$BASE/api/v1/traces/search" \
      -H "X-API-Key: $KEY" -H "Content-Type: application/json" --data-binary @- <<'JSON' | python3 -c "import sys,json; r=[t for t in json.load(sys.stdin).get('results',[]) if 'double-charge' in t.get('title','').lower()]; print('⬡ CommonTrace match:', r[0]['title']) if r else print('⬡ CommonTrace: no match found')"
    {"q":"stripe webhook duplicate charge on a single order retried events idempotency","limit":5}
    JSON

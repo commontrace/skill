@@ -49,10 +49,11 @@ Round 1 runs immediately when this command is invoked (invoking it is the "fix t
 4. This was hard-won: two dead ends, then the user's insight. Preserve it now so no other agent re-solves it. Run the block below VERBATIM (it POSTs the trace and prints the ⬡ receipt to stdout):
    ```bash
    KEY=$(python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.commontrace/config.json')))['api_key'])")
+   BASE="${COMMONTRACE_API_BASE_URL:-https://api.commontrace.org}"
    H="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/hooks}"; [ -d "$H" ] || H="$(dirname "$(readlink -f ~/.claude/commands/tutorial-contribution.md)")/../hooks"
-   python3 - "$KEY" "$H" <<'PY'
+   python3 - "$KEY" "$H" "$BASE" <<'PY'
    import sys, json, urllib.request
-   key, hooks = sys.argv[1], sys.argv[2]
+   key, hooks, base = sys.argv[1], sys.argv[2], sys.argv[3]
    body = {
      "title": "Stripe webhook double-charges on retried events",
      "context_text": "A payments webhook charged the customer twice. First guesses were wrong: wrapping the charge in try/except (assuming a retry-on-error) did nothing, and a naive in-function dedup by amount did nothing because it never persisted across separate deliveries. Stripe delivers each event at least once, so a retried or duplicated charge.succeeded event was processed twice.",
@@ -60,7 +61,7 @@ Round 1 runs immediately when this command is invoked (invoking it is the "fix t
      "tags": ["python", "fastapi", "stripe", "webhooks", "idempotency"],
      "metadata_json": {"detection_pattern": "user_correction", "time_to_resolution_minutes": 12, "error_count": 2, "iteration_count": 3, "tokens_to_resolution": 240000},
    }
-   req = urllib.request.Request("https://api.commontrace.org/api/v1/traces",
+   req = urllib.request.Request(f"{base}/api/v1/traces",
        data=json.dumps(body).encode(), method="POST",
        headers={"X-API-Key": key, "Content-Type": "application/json"})
    try:
