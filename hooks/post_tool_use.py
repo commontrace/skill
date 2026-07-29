@@ -295,12 +295,25 @@ def detect_bash_error(data: dict) -> tuple[bool, str, str]:
        errors and never recorded a resolution (fail→succeed could never fire).
     3. Exit code None with no marker: fall back to the Unix stderr convention.
 
+    The stdout key matters as much as the error signals: a command that
+    succeeds carries stdout and an empty stderr, and handle_bash drops the
+    event entirely when both output and error_text are empty. Miss stdout
+    and every success becomes invisible — no resolution is ever paired, no
+    signature is ever marked resolved, and the whole assisted-resolution
+    loop reports zero.
+
+    Claude Code sends {"stdout", "stderr", "interrupted", "isImage",
+    "noOutputExpected"} for Bash — no exit code, and stdout is NOT named
+    "output". Both spellings are accepted so other harnesses still work.
+
     Returns: (is_error, output_text, error_text_for_search)
     """
     tool_response = data.get("tool_response", {})
 
     if isinstance(tool_response, dict):
-        output = tool_response.get("output", "")
+        output = tool_response.get("stdout")
+        if not output:
+            output = tool_response.get("output", "")
         stderr = tool_response.get("stderr", "")
         exit_code = tool_response.get("exitCode",
                     tool_response.get("exit_code"))
@@ -561,13 +574,29 @@ def _pair_resolution(state_dir: Path, command: str,
             _get_conn, record_resolution, record_trace_consumed,
         )
         conn = _get_conn()
-        # Commons trace consumed since the error → attribute it to the fix
+        # Assisted resolution: fix injected earlier this session → it landed.
+        # Recorded BEFORE the attribution lookup below, not after: the marker
+        # this very resolution just earned has to be visible to the query that
+        # decides the signature's trace_id, or the signature keeps trace_id
+        # NULL forever — and NULL is exactly what resolutions_assisted and the
+        # savings ledger filter out.
+        injected = {e.get("sig") for e in
+                    read_events(state_dir, "recurrence_injected.jsonl")}
+        if match["sig"] in injected:
+            record_trace_consumed(conn, state_dir.name,
+                                  "local:" + error_hash(match["sig"]))
+
+        # Trace consumed since the error → attribute it to the fix. A commons
+        # trace outranks the local: marker when both exist: it carries the
+        # stronger claim and it is what the disclosure trailer cites.
         trace_id = None
         try:
             row = conn.execute(
                 "SELECT trace_consumed_id FROM trigger_feedback "
                 "WHERE session_id = ? AND trace_consumed_id IS NOT NULL "
-                "AND consumed_at >= ? ORDER BY consumed_at DESC LIMIT 1",
+                "AND consumed_at >= ? "
+                "ORDER BY (trace_consumed_id LIKE 'local:%') ASC, "
+                "consumed_at DESC LIMIT 1",
                 (state_dir.name, err_t),
             ).fetchone()
             if row:
@@ -579,13 +608,6 @@ def _pair_resolution(state_dir: Path, command: str,
                           fix_command=redact_command(command[:200]),
                           fix_files=fix_files[:10],
                           trace_id=trace_id)
-
-        # Assisted resolution: fix injected earlier this session → it landed
-        injected = {e.get("sig") for e in
-                    read_events(state_dir, "recurrence_injected.jsonl")}
-        if match["sig"] in injected:
-            record_trace_consumed(conn, state_dir.name,
-                                  "local:" + error_hash(match["sig"]))
 
         # Disclosure trailer: only for commons traces, never local markers
         trailer_output = None
