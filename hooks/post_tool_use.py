@@ -409,6 +409,7 @@ def handle_bash(data: dict, state_dir: Path) -> dict | None:
                 if query:
                     results = search_commontrace(query, api_key)
                     if results:
+                        _record_surfaced(state_dir, sig, results)
                         formatted = format_results(results)
                         return {
                             "hookSpecificOutput": {
@@ -528,6 +529,90 @@ def _command_head(command: str) -> str:
     return ""
 
 
+# Commons traces the hook itself put in front of the agent, keyed by the
+# error signature they were retrieved for. Read back by _pair_resolution.
+SURFACED_FILE = "surfaced.jsonl"
+
+
+def _record_surfaced(state_dir: Path, sig: str, results: list[dict]) -> None:
+    """Remember which commons traces were surfaced for this error signature.
+
+    Retrieval and payoff are separated in time: the traces are fetched here,
+    at the failure, and the command only starts passing much later. The ids
+    were formatted into the agent's context and then dropped, so a fix the
+    commons actually supplied was indistinguishable from one the agent found
+    alone — commons consumption reported flat zero while the local cache was
+    observable. Persisting the ids at injection time is what lets
+    _pair_resolution attribute them when the same signature resolves.
+
+    Structural only: signature, ids, timestamp. No content, no user text.
+    Never raises — append_event already swallows OSError.
+    """
+    if not sig:
+        return
+    ids = []
+    for r in results:
+        if not isinstance(r, dict):
+            continue
+        # Same sanitization as the trailer: ids reach a JSON hook payload and
+        # a URL, so strip anything that is not id-shaped and cap the length.
+        safe = re.sub(r"[^A-Za-z0-9_-]", "", str(r.get("id", "")))[:64]
+        if safe and safe not in ids:
+            ids.append(safe)
+    if not ids:
+        return
+    append_event(state_dir, SURFACED_FILE, {"sig": sig, "trace_ids": ids[:5]})
+
+
+def _attribute_surfaced_commons(conn, state_dir: Path, sig: str,
+                                err_t: float) -> None:
+    """Credit a commons trace surfaced for `sig` when that signature resolves.
+
+    Evidence standard, deliberately identical to the one already blessed for
+    the ``local:`` marker: the trace was put in front of the agent earlier in
+    THIS session, for THIS exact error signature, and the command that was
+    failing now succeeds. Nothing here reads the agent's reasoning or the
+    user's messages — signature equality and ordering only.
+
+    Two guards keep the claim honest rather than merely non-zero:
+
+    * If a commons trace was already consumed in this window, the agent
+      actually called get_trace and named the trace that helped. That exact
+      evidence stands; the rank-1 heuristic below must never override it.
+    * A trace already credited in this session is not credited twice. When
+      the same signature recurs it is the locally cached fix paying off —
+      crediting the commons again would double-count one act of help.
+
+    Which id: rank 1 of the most recent surfacing for this signature. The
+    agent saw the whole (max 3) list, so this is a heuristic — it is the
+    search ranking's own best answer and the first line the agent read.
+    """
+    surfaced = [e for e in read_events(state_dir, SURFACED_FILE)
+                if e.get("sig") == sig
+                and isinstance(e.get("trace_ids"), list) and e["trace_ids"]]
+    if not surfaced:
+        return
+    row = conn.execute(
+        "SELECT 1 FROM trigger_feedback WHERE session_id = ? "
+        "AND trace_consumed_id IS NOT NULL "
+        "AND trace_consumed_id NOT LIKE 'local:%' AND consumed_at >= ? "
+        "LIMIT 1",
+        (state_dir.name, err_t),
+    ).fetchone()
+    if row:
+        return
+    trace_id = surfaced[-1]["trace_ids"][0]
+    already = conn.execute(
+        "SELECT 1 FROM trigger_feedback "
+        "WHERE session_id = ? AND trace_consumed_id = ? LIMIT 1",
+        (state_dir.name, trace_id),
+    ).fetchone()
+    if already:
+        return
+    from local_store import record_trace_consumed
+    record_trace_consumed(conn, state_dir.name, trace_id)
+
+
 def _pair_resolution(state_dir: Path, command: str,
                      previous_errors: list[dict]) -> dict | None:
     """Pair a succeeding command with a prior error of the same command head.
@@ -539,8 +624,10 @@ def _pair_resolution(state_dir: Path, command: str,
     If this signature's fix was injected earlier this session, the
     resolution is recorded as a consumed trigger (assisted resolution),
     which feeds the error_recurrence rate in the existing M22-gated
-    telemetry. When a commons (non-"local:") trace contributed to the
-    fix, returns a Resolved-with disclosure suggestion for the agent.
+    telemetry. A commons trace counts as having contributed either when
+    the agent read it with get_trace or when the hook itself surfaced it
+    for this exact signature (see _attribute_surfaced_commons). When one
+    did, returns a Resolved-with disclosure suggestion for the agent.
     Never raises.
     """
     try:
@@ -574,6 +661,13 @@ def _pair_resolution(state_dir: Path, command: str,
             _get_conn, record_resolution, record_trace_consumed,
         )
         conn = _get_conn()
+        # Commons first, local second — order is load-bearing, not cosmetic.
+        # record_trace_consumed attaches to ONE unconsumed trigger row, so when
+        # both claims apply the commons trace has to take that row: it carries
+        # the stronger claim ("the shared knowledge base helped" vs "our own
+        # cache helped") and it is what the disclosure trailer cites.
+        _attribute_surfaced_commons(conn, state_dir, match["sig"], err_t)
+
         # Assisted resolution: fix injected earlier this session → it landed.
         # Recorded BEFORE the attribution lookup below, not after: the marker
         # this very resolution just earned has to be visible to the query that
@@ -601,6 +695,20 @@ def _pair_resolution(state_dir: Path, command: str,
             ).fetchone()
             if row:
                 trace_id = row["trace_consumed_id"]
+            # Same precedence, applied to the stored row: a local: marker must
+            # never overwrite a commons id this signature already carries.
+            # record_resolution's COALESCE only protects NULL, and the
+            # recurrence injection renders trace_id as a real, fetchable id
+            # ("use get_trace with ID ...") — a local: marker there is noise.
+            if trace_id and str(trace_id).startswith("local:"):
+                prior = conn.execute(
+                    "SELECT trace_id FROM error_signatures "
+                    "WHERE project_id = ? AND signature = ?",
+                    (project_id, match["sig"]),
+                ).fetchone()
+                if prior and prior["trace_id"] and not str(
+                        prior["trace_id"]).startswith("local:"):
+                    trace_id = None
         except Exception:
             trace_id = None
 
