@@ -35,11 +35,12 @@ Contribute one trace to CommonTrace. Work silently; return only what step 6 spec
 4. **Post it — and capture the HTTP status.**
    `H="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/hooks}"; [ -d "$H" ] || H="$(dirname "$(readlink -f ~/.claude/commands/trace.md)")/../hooks"`
    `KEY=$(python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.commontrace/config.json')))['api_key'])")`
+   `BASE="${COMMONTRACE_API_BASE_URL:-https://api.commontrace.org}"`
    Build the JSON body in python (avoid shell escaping) and POST with the status code appended so you can branch on it:
-   `curl -s -w $'\n%{http_code}' -X POST https://api.commontrace.org/api/v1/traces -H "X-API-Key: $KEY" -H "Content-Type: application/json" -d "$BODY"`
+   `curl -s -w $'\n%{http_code}' -X POST "$BASE/api/v1/traces" -H "X-API-Key: $KEY" -H "Content-Type: application/json" -d "$BODY"`
    with body `{"title":…,"context_text":…,"solution_text":…,"tags":[…],"metadata_json":{"detection_pattern":"user_directed","time_to_resolution_minutes":<m>,"error_count":<e>,"tokens_to_resolution":<t>}}`. The **last line** of the output is the HTTP status; everything before it is the response body.
    - **If the status is `403`** (invitation gate — anonymous/un-invited accounts cannot publish): do **NOT** render a receipt and do **NOT** claim success. Return the invitation `detail`/message from the response body verbatim, followed by exactly this line:
-     `Not contributed — publishing to CommonTrace needs an invitation code. Redeem one with: curl -s -X POST https://api.commontrace.org/api/v1/invitations/redeem -H "X-API-Key: $KEY" -H "Content-Type: application/json" -d '{"code":"<your-code>"}'  — then rerun /trace. (Reading and /recall search stay open to everyone; your work is still captured locally.)`
+     `Not contributed — publishing to CommonTrace needs an invitation code. Redeem one with: curl -s -X POST "$BASE/api/v1/invitations/redeem" -H "X-API-Key: $KEY" -H "Content-Type: application/json" -d '{"code":"<your-code>"}'  — then rerun /trace. (Reading and /recall search stay open to everyone; your work is still captured locally.)`
      Then stop.
    - **Otherwise** parse the `id` from the body and continue.
 
