@@ -9,7 +9,7 @@ weighted importance score to decide whether to prompt for contribution.
 Importance scoring (structural, no NLU):
   error_resolution:       3.0  — error→fix→verify cycle
   security_hardening:     2.5  — security file changes after errors
-  user_correction:        2.5  — user redirected approach (file changed before/after turn)
+  post_turn_revision:     2.5  — same file changed before and after a user turn
   approach_reversal:      2.5  — rewrote after iteration (paradigm shift)
   research_then_implement: 2.0  — searched then coded (no errors)
   test_fix_cycle:         2.0  — test fails → fix code → test passes
@@ -472,14 +472,14 @@ def compute_importance(state_dir: Path, effectiveness: dict | None = None) -> tu
             "fix_files": fc.get("fix_files", [])[:5],
         }
 
-    # ── User Correction (2.5) — user redirected the approach ──
-    correction_candidates = [
-        c for c in candidates if c.get("pattern") == "user_correction"
+    # ── Post-Turn Revision (2.5) — same file changed before and after a user turn ──
+    revision_candidates = [
+        c for c in candidates if c.get("pattern") == "post_turn_revision"
     ]
-    if correction_candidates:
-        scores["user_correction"] = 2.5
-        cc = correction_candidates[-1]
-        evidence["user_correction"] = {
+    if revision_candidates:
+        scores["post_turn_revision"] = 2.5
+        cc = revision_candidates[-1]
+        evidence["post_turn_revision"] = {
             "file": cc.get("file", ""),
             "pre_turn_edits": cc.get("pre_turn_edits", 0),
         }
@@ -742,10 +742,10 @@ def _build_candidate(score: float, top_pattern: str, evidence: dict,
             f"searches) and worked around {evidence.get('error_count', 0)} "
             f"error(s). Workarounds are especially valuable."
         ),
-        "user_correction": (
-            f"You changed approach on {Path(evidence.get('file', '')).name} "
-            f"after user feedback — the gap between your initial approach and "
-            f"the correct one is exactly the knowledge other agents need."
+        "post_turn_revision": (
+            f"You revised {Path(evidence.get('file', '')).name} again after "
+            f"a user turn — whatever changed between the first pass and "
+            f"this one is exactly the knowledge other agents need."
         ),
         "test_fix_cycle": (
             f"Tests failed, you fixed the code "

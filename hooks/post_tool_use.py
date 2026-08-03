@@ -96,8 +96,8 @@ def _is_docs_only(file_path: str) -> bool:
     """True for documentation/markdown files.
 
     A markdown edit made after a user turn is almost always the agent writing
-    up notes, not the user redirecting a wrong approach — surfacing it as a
-    high-value ``user_correction`` was noisy and misleading. Exclude docs.
+    up notes, not a revision worth surfacing as a high-value
+    ``post_turn_revision`` — that was noisy and misleading. Exclude docs.
     """
     return Path(file_path).suffix.lower() in _DOCS_EXTENSIONS
 
@@ -1002,7 +1002,7 @@ def _detect_knowledge_candidates(tool_name: str, data: dict,
                     "file_count": len(set(all_files)),
                 })
 
-    # ── User Correction: same file changed before and after user message ──
+    # ── Post-Turn Revision: same file changed before and after user message ──
     if tool_name in ("Write", "Edit", "NotebookEdit"):
         ti = data.get("tool_input", {})
         file_path = ti.get("file_path", "") if isinstance(ti, dict) else ""
@@ -1021,10 +1021,10 @@ def _detect_knowledge_candidates(tool_name: str, data: dict,
                 ]
                 # Current edit is AFTER user turn (we're in post_tool_use)
                 if pre_turn_edits and now > last_turn_t:
-                    if not _has_candidate(state_dir, "user_correction",
+                    if not _has_candidate(state_dir, "post_turn_revision",
                                           file_path):
                         append_event(state_dir, "candidates.jsonl", {
-                            "pattern": "user_correction",
+                            "pattern": "post_turn_revision",
                             "file": file_path,
                             "pre_turn_edits": len(pre_turn_edits),
                         })

@@ -132,7 +132,7 @@ _ENV_TRUTHY = {"1", "true", "yes", "on"}
 CONTRIBUTION_WORTHY_PATTERNS = {
     "error_resolution", "fail_then_succeed", "test_fix_cycle",
     "config_discovery", "dependency_resolution", "security_hardening",
-    "infra_discovery", "approach_reversal", "user_correction",
+    "infra_discovery", "approach_reversal", "post_turn_revision",
     "migration_pattern", "research_then_implement",
 }
 
@@ -273,7 +273,7 @@ def main() -> None:
     state_dir = get_state_dir(data)
     count = increment_counter(state_dir, "user_turn_count")
 
-    # Record timestamp for user_correction detection in post_tool_use
+    # Record timestamp for post_turn_revision detection in post_tool_use
     append_event(state_dir, "user_turns.jsonl", {"turn": count})
 
     # Detect structural emphasis in user prompt
