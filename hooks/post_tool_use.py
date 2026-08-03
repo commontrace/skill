@@ -2,29 +2,22 @@
 """
 CommonTrace PostToolUse hook — Layer 1 state writer + knowledge detection.
 
-Two responsibilities:
-1. Record structural signals (errors, changes, research, contributions)
-2. Detect knowledge crystallization moments in real-time
+This file is the dispatcher: it parses the hook payload, routes it to a
+handler per tool, and prints at most one injection back to the agent. The
+thinking lives in four focused modules:
 
-Knowledge crystallization = state transitions where "not knowing" becomes
-"knowing". Detected structurally from tool-use sequences:
+  bash_result.py — did that command fail?
+  detection.py   — did the agent just learn something? (4 patterns)
+  retrieval.py   — cooldowns, commons search, the injection points
+  resolution.py  — pairing a passing command with the error it fixed
 
-  Research→Implement:  research events then code changes (no errors)
-  Approach Reversal:   Write to a file previously Edit-ed 3+ times
-  User Correction:     same file edited before and after a user turn
-  Test Fix Cycle:      test fails → code changes → test passes
-
-Each detected transition writes a "knowledge candidate" to
-candidates.jsonl with context for the stop hook to score. The fifth
-scored pattern, error_resolution, needs no candidate: stop.py reads it
-straight off the error/change/resolution event streams.
+Handlers record structural signals (errors, changes, research,
+contributions) as they go; stop.py scores them at the end of the session.
 """
 
 import json
-import os
 import re
 import sys
-import time
 from pathlib import Path
 
 # Defensive (Issue 9): hook payloads arrive as UTF-8 JSON on stdin, but some
@@ -37,293 +30,18 @@ except Exception:
     pass
 
 sys.path.insert(0, str(Path(__file__).parent))
+from bash_result import detect_bash_error
+from detection import _detect_knowledge_candidates
+from redact import redact_text, redact_command, is_sensitive_file
+from resolution import _pair_resolution, record_surfaced
+from retrieval import (
+    _check_domain_entry, _check_error_recurrence, _check_pre_code,
+    format_error_hits, search_on_bash_error,
+)
 from session_state import (
-    get_state_dir, append_event, read_events, is_config_file,
-    error_signature, error_hash, log_hook_error,
+    append_event, error_signature, get_state_dir, is_config_file, log_hook_error,
+    read_events, read_project_id,
 )
-from redact import redact_text, redact_command, is_sensitive_file, strip_harness_noise
-
-
-CONFIG_FILE = Path.home() / ".commontrace" / "config.json"
-API_BASE = "https://api.commontrace.org"
-COOLDOWN_DIR = Path.home() / ".commontrace" / "cooldowns"
-
-EXTENSION_TO_LANGUAGE = {
-    ".py": "python", ".ts": "typescript", ".tsx": "typescript",
-    ".jsx": "javascript", ".js": "javascript", ".go": "go",
-    ".rs": "rust", ".java": "java", ".rb": "ruby",
-}
-
-# Test commands for test_fix_cycle detection
-TEST_COMMANDS = {
-    "pytest", "jest", "mocha", "vitest", "cargo test", "go test",
-    "npm test", "yarn test", "rspec", "phpunit", "unittest",
-    "npm run test", "yarn run test",
-}
-
-
-# Documentation extensions — edits to these are prose, not a code correction.
-_DOCS_EXTENSIONS = {".md", ".markdown", ".mdx", ".rst"}
-
-
-def _is_docs_only(file_path: str) -> bool:
-    """True for documentation/markdown files.
-
-    A markdown edit made after a user turn is almost always the agent writing
-    up notes, not the user redirecting a wrong approach — surfacing it as a
-    high-value ``user_correction`` was noisy and misleading. Exclude docs.
-    """
-    return Path(file_path).suffix.lower() in _DOCS_EXTENSIONS
-
-
-def load_api_key() -> str:
-    try:
-        if CONFIG_FILE.exists():
-            config = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-            return config.get("api_key", "")
-    except (json.JSONDecodeError, OSError):
-        pass
-    return os.environ.get("COMMONTRACE_API_KEY", "")
-
-
-def is_on_cooldown(trigger_name: str, seconds: int) -> bool:
-    """Per-trigger cooldown check."""
-    path = COOLDOWN_DIR / f"{trigger_name}.ts"
-    try:
-        if path.exists():
-            last = float(path.read_text(encoding="utf-8"))
-            if time.time() - last < seconds:
-                return True
-    except (ValueError, OSError):
-        pass
-    return False
-
-
-def set_cooldown(trigger_name: str) -> None:
-    """Set cooldown timestamp for a trigger."""
-    COOLDOWN_DIR.mkdir(parents=True, exist_ok=True)
-    try:
-        (COOLDOWN_DIR / f"{trigger_name}.ts").write_text(
-            str(time.time()), encoding="utf-8")
-    except OSError:
-        pass
-
-
-EXPLORATION_EVERY = 10  # every Nth suppressed check fires anyway (epsilon floor)
-
-
-def _exploration_due(trigger_name: str) -> bool:
-    """Deterministic epsilon-greedy floor for suppressed triggers.
-
-    Counts suppressed-eligible checks per trigger; every
-    EXPLORATION_EVERY-th check is allowed through at the base cooldown.
-    Guarantees a suppressed trigger keeps sampling reality and can earn
-    its way back when the corpus or the project changes — the search
-    rate never decays to zero (spec §4.1).
-    """
-    COOLDOWN_DIR.mkdir(parents=True, exist_ok=True)
-    path = COOLDOWN_DIR / f"{trigger_name}.suppressed"
-    try:
-        count = int(path.read_text(encoding="utf-8")) if path.exists() else 0
-    except (ValueError, OSError):
-        count = 0
-    count += 1
-    try:
-        path.write_text(str(count), encoding="utf-8")
-    except OSError:
-        return False
-    return count % EXPLORATION_EVERY == 0
-
-
-def _get_adaptive_cooldown(trigger_name: str, base_seconds: int,
-                           state_dir: Path) -> int:
-    """Scale cooldown by trigger conversion rate from trigger_feedback.
-
-    >= 40% rate → 0.5x cooldown (more aggressive — trigger is effective)
-    < 5% after 20+ firings → 3x cooldown, with an epsilon-greedy floor:
-        every EXPLORATION_EVERY-th suppressed check goes through at the
-        base cooldown, so suppression is never permanent.
-    Default: no change
-
-    Stats come from trigger_stats.json (written by session_start from
-    get_trigger_effectiveness, key "fired"; "total" kept as a legacy
-    fallback for old bridge files).
-    """
-    try:
-        stats_path = state_dir / "trigger_stats.json"
-        if not stats_path.exists():
-            return base_seconds
-        stats = json.loads(stats_path.read_text(encoding="utf-8"))
-        trigger_data = stats.get(trigger_name)
-        if not trigger_data:
-            return base_seconds
-        fired = trigger_data.get("fired", trigger_data.get("total", 0))
-        rate = trigger_data.get("rate", 0)
-        if fired >= 20 and rate < 0.05:
-            if _exploration_due(trigger_name):
-                return base_seconds
-            return base_seconds * 3
-        if rate >= 0.4:
-            return max(base_seconds // 2, 5)
-    except (json.JSONDecodeError, OSError, TypeError):
-        pass
-    return base_seconds
-
-
-def search_commontrace(query: str, api_key: str,
-                       context: dict | None = None) -> list[dict]:
-    import urllib.error
-    import urllib.request
-
-    base_url = os.environ.get("COMMONTRACE_API_BASE_URL", API_BASE).rstrip("/")
-    body: dict = {"q": query, "limit": 3}
-    if context:
-        body["context"] = context
-    payload = json.dumps(body).encode("utf-8")
-
-    req = urllib.request.Request(
-        f"{base_url}/api/v1/traces/search",
-        data=payload,
-        method="POST",
-        headers={
-            "Content-Type": "application/json",
-            "X-API-Key": api_key,
-        },
-    )
-
-    try:
-        with urllib.request.urlopen(req, timeout=3) as response:
-            data = json.loads(response.read())
-            return data.get("results", [])
-    except (urllib.error.URLError, urllib.error.HTTPError,
-            json.JSONDecodeError, OSError) as e:
-        # Status-bearing network POST (domain-entry knowledge search). An empty
-        # list is indistinguishable from "no matches" to the caller — the
-        # silent-success trap — so a failed search silently drops the injection.
-        # Log the real cause locally; still return [] so the hook proceeds.
-        log_hook_error("search_commontrace", e)
-        return []
-
-
-def format_results(results: list[dict]) -> str:
-    lines = []
-    for i, r in enumerate(results, 1):
-        title = r.get("title", "Untitled")
-        solution = r.get("solution_text", "")[:200]
-        trace_id = r.get("id", "")
-        # Contributor names are user-supplied — sanitize before display
-        contributor = re.sub(
-            r"[^\w\s.\-]", "", str(r.get("contributor_name") or ""))[:40].strip()
-        by = f" by {contributor}" if contributor else ""
-        lines.append(f"{i}. [{title}] — {solution}... (ID: {trace_id}{by})")
-    return "\n".join(lines)
-
-
-# Precise failure markers for the exit-code 0/None case. A pipeline's exit
-# code is the LAST command's, so `npx jest | tail` exits 0 even when jest
-# failed — the failure survives only as text. Anchor on strong, specific
-# signals (never the bare word "error", never a "0 failed" summary) so a GREEN
-# run that merely mentions "error" or reports "0 failed" is not misclassified.
-_FAILURE_MARKER_PATTERNS = (
-    re.compile(r'\bFAIL'),                              # jest FAIL, go --- FAIL, pytest FAILED
-    re.compile(r'\bAssertionError\b'),                  # python/unittest
-    re.compile(r'\bTests?:\s*[1-9]\d*\s+failed', re.IGNORECASE),  # jest "Tests: 1 failed"
-    re.compile(r'\b[1-9]\d*\s+failed\b', re.IGNORECASE),          # "1 failed" (not "0 failed")
-    re.compile(r'(?im)^\s*exit code [1-9]'),            # explicit non-zero exit line
-    re.compile(r'(?m)^Error:'),                         # node/js error header (line-anchored)
-    re.compile(r'Traceback \(most recent call last\)'),  # python traceback
-)
-
-
-def _has_failure_marker(output: str, stderr: str) -> bool:
-    """True if combined output+stderr carries a precise failure marker.
-
-    Used only when the exit code is 0 or absent — the case a piped test run
-    (`… | tail`) reports success it didn't earn. Strong markers only, so a
-    passing run is never flagged just for containing the word "error".
-    """
-    combined = f"{output or ''}\n{stderr or ''}"
-    return any(p.search(combined) for p in _FAILURE_MARKER_PATTERNS)
-
-
-def detect_bash_error(data: dict) -> tuple[bool, str, str]:
-    """Detect if a Bash command failed using structural signals only.
-
-    Checks (in order):
-    1. Non-zero exit code in tool_response (most reliable).
-    2. Exit code 0 or None: scan combined output+stderr for precise failure
-       markers (catches piped failures whose exit code is the pipe's last
-       command). NON-empty stderr is NOT treated as failure on a clean exit —
-       jest/pytest/cargo/go/npm/git all write NORMAL output to stderr on a
-       GREEN run, so the old "stderr = error" rule stored passing runs as
-       errors and never recorded a resolution (fail→succeed could never fire).
-    3. Exit code None with no marker: fall back to the Unix stderr convention.
-
-    The stdout key matters as much as the error signals: a command that
-    succeeds carries stdout and an empty stderr, and handle_bash drops the
-    event entirely when both output and error_text are empty. Miss stdout
-    and every success becomes invisible — no resolution is ever paired, no
-    signature is ever marked resolved, and the whole assisted-resolution
-    loop reports zero.
-
-    Claude Code sends {"stdout", "stderr", "interrupted", "isImage",
-    "noOutputExpected"} for Bash — no exit code, and stdout is NOT named
-    "output". Both spellings are accepted so other harnesses still work.
-
-    Returns: (is_error, output_text, error_text_for_search)
-    """
-    tool_response = data.get("tool_response", {})
-
-    if isinstance(tool_response, dict):
-        output = tool_response.get("stdout")
-        if not output:
-            output = tool_response.get("output", "")
-        stderr = tool_response.get("stderr", "")
-        exit_code = tool_response.get("exitCode",
-                    tool_response.get("exit_code"))
-
-        # 1. Non-zero exit code is the clearest structural signal.
-        if exit_code is not None and exit_code != 0:
-            # Use stderr if available, otherwise tail of output
-            error_text = stderr if stderr else output[-500:]
-            return True, output, strip_harness_noise(error_text)
-
-        # 2. Exit code is 0 or None — scan for precise failure markers so a
-        #    piped test run that "succeeded" via tail/head is still caught.
-        if _has_failure_marker(output, stderr):
-            return True, output, strip_harness_noise((stderr or output)[-500:])
-
-        # Explicit success (exit 0): trust it. Non-empty stderr on a clean
-        # exit is normal tool chatter, NOT an error.
-        if exit_code == 0:
-            return False, output or stderr, ""
-
-        # 3. Exit code unknown (None) and no marker: Unix stderr convention.
-        if stderr and stderr.strip():
-            return True, output, strip_harness_noise(stderr[-500:])
-
-        return False, output, ""
-
-    if isinstance(tool_response, str):
-        # Plain string — can't structurally determine error.
-        # But Claude Code often includes exit code info in the string.
-        # Check for non-zero exit code at the end (this is structural
-        # metadata appended by Claude Code, not error message parsing).
-        output = tool_response
-        # Claude Code appends "exit code: N" or similar
-        exit_match = re.search(r'exit\s*code[:\s]+(\d+)', output[-100:],
-                               re.IGNORECASE)
-        if exit_match and int(exit_match.group(1)) != 0:
-            return True, output, strip_harness_noise(output[-500:])
-
-        # Piped failure captured as a plain string (exit code hidden) — the
-        # marker scan still catches it without over-firing on a passing run.
-        if _has_failure_marker(output, ""):
-            return True, output, strip_harness_noise(output[-500:])
-
-        return False, output, ""
-
-    return False, "", ""
 
 
 # ── Tool handlers ────────────────────────────────────────────────────────
@@ -360,43 +78,24 @@ def handle_bash(data: dict, state_dir: Path) -> dict | None:
         if recurrence_output:
             return recurrence_output
 
-        # Search CommonTrace with raw error output (let search engine
-        # handle relevance — no keyword extraction needed)
-        if not is_on_cooldown("bash_error",
-                              _get_adaptive_cooldown("bash_error", 30, state_dir)):
-            api_key = load_api_key()
-            if api_key:
-                set_cooldown("bash_error")
-                _record_trigger_safe(state_dir, "bash_error")
-                # M19: Redact before sending error text as search query
-                query = redact_text(error_text.strip()[-200:])
-                if query:
-                    results = search_commontrace(query, api_key)
-                    if results:
-                        _record_surfaced(state_dir, sig, results)
-                        formatted = format_results(results)
-                        return {
-                            "hookSpecificOutput": {
-                                "hookEventName": "PostToolUse",
-                                "additionalContext": (
-                                    f"CommonTrace found relevant traces "
-                                    f"for this error:\n\n{formatted}\n\n"
-                                    f"Use get_trace with the ID to read "
-                                    f"the full solution."
-                                ),
-                            }
-                        }
-    else:
-        # ── Success: check if this resolves a previous error ──
-        previous_errors = read_events(state_dir, "errors.jsonl")
-        if previous_errors:
-            append_event(state_dir, "resolutions.jsonl", {
-                "source": "bash",
-                "command": redact_command(command[:200]),
-                "output_preview": redact_text(output[:200]) if output else "",
-                "errors_before": len(previous_errors),
-            })
-            return _pair_resolution(state_dir, command, previous_errors)
+        # Search CommonTrace with the raw error output (let the search engine
+        # handle relevance — no keyword extraction needed).
+        results = search_on_bash_error(state_dir, error_text)
+        if results:
+            record_surfaced(state_dir, sig, results)
+            return format_error_hits(results)
+        return None
+
+    # ── Success: check if this resolves a previous error ──
+    previous_errors = read_events(state_dir, "errors.jsonl")
+    if previous_errors:
+        append_event(state_dir, "resolutions.jsonl", {
+            "source": "bash",
+            "command": redact_command(command[:200]),
+            "output_preview": redact_text(output[:200]) if output else "",
+            "errors_before": len(previous_errors),
+        })
+        return _pair_resolution(state_dir, command, previous_errors)
 
     return None
 
@@ -439,580 +138,11 @@ def handle_research(data: dict, state_dir: Path) -> dict | None:
     if not isinstance(tool_input, dict):
         return None
 
-    tool_name = data.get("tool_name", "")
-    query = tool_input.get("query", tool_input.get("url", ""))
-
     append_event(state_dir, "research.jsonl", {
-        "tool": tool_name,
-        "query": str(query)[:200],
+        "tool": data.get("tool_name", ""),
+        "query": str(tool_input.get("query", tool_input.get("url", "")))[:200],
     })
 
-    return None
-
-
-def _record_trigger_safe(state_dir: Path, trigger_name: str) -> None:
-    """Record a trigger fire for reinforcement tracking. Never fails."""
-    try:
-        from local_store import _get_conn, record_trigger
-        session_id = state_dir.name
-        conn = _get_conn()
-        record_trigger(conn, session_id, trigger_name)
-        conn.close()
-    except Exception as e:
-        log_hook_error("record_trigger", e)
-
-
-def _read_project_id(state_dir: Path) -> int | None:
-    """Read project_id bridge file written by session_start."""
-    try:
-        return int((state_dir / "project_id").read_text(encoding="utf-8").strip())
-    except (ValueError, OSError, FileNotFoundError):
-        return None
-
-
-def _command_head(command: str) -> str:
-    """First meaningful token of a shell command, skipping VAR=val prefixes.
-
-    Known limitation (accepted): compound commands ("cd x && pytest") yield
-    the first command's head. Pairing is a heuristic, not a proof.
-    """
-    for tok in command.split():
-        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tok):
-            continue
-        return tok
-    return ""
-
-
-# Commons traces the hook itself put in front of the agent, keyed by the
-# error signature they were retrieved for. Read back by _pair_resolution.
-SURFACED_FILE = "surfaced.jsonl"
-
-
-def _record_surfaced(state_dir: Path, sig: str, results: list[dict]) -> None:
-    """Remember which commons traces were surfaced for this error signature.
-
-    Retrieval and payoff are separated in time: the traces are fetched here,
-    at the failure, and the command only starts passing much later. The ids
-    were formatted into the agent's context and then dropped, so a fix the
-    commons actually supplied was indistinguishable from one the agent found
-    alone — commons consumption reported flat zero while the local cache was
-    observable. Persisting the ids at injection time is what lets
-    _pair_resolution attribute them when the same signature resolves.
-
-    Structural only: signature, ids, timestamp. No content, no user text.
-    Never raises — append_event already swallows OSError.
-    """
-    if not sig:
-        return
-    ids = []
-    for r in results:
-        if not isinstance(r, dict):
-            continue
-        # Same sanitization as the trailer: ids reach a JSON hook payload and
-        # a URL, so strip anything that is not id-shaped and cap the length.
-        safe = re.sub(r"[^A-Za-z0-9_-]", "", str(r.get("id", "")))[:64]
-        if safe and safe not in ids:
-            ids.append(safe)
-    if not ids:
-        return
-    append_event(state_dir, SURFACED_FILE, {"sig": sig, "trace_ids": ids[:5]})
-
-
-def _attribute_surfaced_commons(conn, state_dir: Path, sig: str,
-                                err_t: float) -> None:
-    """Credit a commons trace surfaced for `sig` when that signature resolves.
-
-    Evidence standard, deliberately identical to the one already blessed for
-    the ``local:`` marker: the trace was put in front of the agent earlier in
-    THIS session, for THIS exact error signature, and the command that was
-    failing now succeeds. Nothing here reads the agent's reasoning or the
-    user's messages — signature equality and ordering only.
-
-    Two guards keep the claim honest rather than merely non-zero:
-
-    * If a commons trace was already consumed in this window, the agent
-      actually called get_trace and named the trace that helped. That exact
-      evidence stands; the rank-1 heuristic below must never override it.
-    * A trace already credited in this session is not credited twice. When
-      the same signature recurs it is the locally cached fix paying off —
-      crediting the commons again would double-count one act of help.
-
-    Which id: rank 1 of the most recent surfacing for this signature. The
-    agent saw the whole (max 3) list, so this is a heuristic — it is the
-    search ranking's own best answer and the first line the agent read.
-    """
-    surfaced = [e for e in read_events(state_dir, SURFACED_FILE)
-                if e.get("sig") == sig
-                and isinstance(e.get("trace_ids"), list) and e["trace_ids"]]
-    if not surfaced:
-        return
-    row = conn.execute(
-        "SELECT 1 FROM trigger_feedback WHERE session_id = ? "
-        "AND trace_consumed_id IS NOT NULL "
-        "AND trace_consumed_id NOT LIKE 'local:%' AND consumed_at >= ? "
-        "LIMIT 1",
-        (state_dir.name, err_t),
-    ).fetchone()
-    if row:
-        return
-    trace_id = surfaced[-1]["trace_ids"][0]
-    already = conn.execute(
-        "SELECT 1 FROM trigger_feedback "
-        "WHERE session_id = ? AND trace_consumed_id = ? LIMIT 1",
-        (state_dir.name, trace_id),
-    ).fetchone()
-    if already:
-        return
-    from local_store import record_trace_consumed
-    record_trace_consumed(conn, state_dir.name, trace_id)
-
-
-def _pair_resolution(state_dir: Path, command: str,
-                     previous_errors: list[dict]) -> dict | None:
-    """Pair a succeeding command with a prior error of the same command head.
-
-    Structural signal: the command that failed now succeeds. Stores the fix
-    (verification command + basenames of files changed since the error +
-    any commons trace consumed since the error) on the signature row —
-    the payload _check_error_recurrence injects when the signature recurs.
-    If this signature's fix was injected earlier this session, the
-    resolution is recorded as a consumed trigger (assisted resolution),
-    which feeds the error_recurrence rate in the existing M22-gated
-    telemetry. A commons trace counts as having contributed either when
-    the agent read it with get_trace or when the hook itself surfaced it
-    for this exact signature (see _attribute_surfaced_commons). When one
-    did, returns a Resolved-with disclosure suggestion for the agent.
-    Never raises.
-    """
-    try:
-        head = _command_head(command)
-        if not head:
-            return None
-        match = None
-        for entry in reversed(previous_errors):
-            if entry.get("source") != "bash" or not entry.get("sig"):
-                continue
-            if _command_head(entry.get("command", "")) == head:
-                match = entry
-                break
-        if match is None:
-            return None
-        project_id = _read_project_id(state_dir)
-        if project_id is None:
-            return None
-        err_t = match.get("t", 0)
-
-        # Files changed between the error and this success = the fix.
-        # Basenames only — full paths can contain usernames.
-        fix_files = []
-        for ch in read_events(state_dir, "changes.jsonl"):
-            if ch.get("t", 0) >= err_t and ch.get("file"):
-                name = Path(ch["file"]).name
-                if name not in fix_files:
-                    fix_files.append(name)
-
-        from local_store import (
-            _get_conn, record_resolution, record_trace_consumed,
-        )
-        conn = _get_conn()
-        # Commons first, local second — order is load-bearing, not cosmetic.
-        # record_trace_consumed attaches to ONE unconsumed trigger row, so when
-        # both claims apply the commons trace has to take that row: it carries
-        # the stronger claim ("the shared knowledge base helped" vs "our own
-        # cache helped") and it is what the disclosure trailer cites.
-        _attribute_surfaced_commons(conn, state_dir, match["sig"], err_t)
-
-        # Assisted resolution: fix injected earlier this session → it landed.
-        # Recorded BEFORE the attribution lookup below, not after: the marker
-        # this very resolution just earned has to be visible to the query that
-        # decides the signature's trace_id, or the signature keeps trace_id
-        # NULL forever — and NULL is exactly what resolutions_assisted and the
-        # savings ledger filter out.
-        injected = {e.get("sig") for e in
-                    read_events(state_dir, "recurrence_injected.jsonl")}
-        if match["sig"] in injected:
-            record_trace_consumed(conn, state_dir.name,
-                                  "local:" + error_hash(match["sig"]))
-
-        # Trace consumed since the error → attribute it to the fix. A commons
-        # trace outranks the local: marker when both exist: it carries the
-        # stronger claim and it is what the disclosure trailer cites.
-        trace_id = None
-        try:
-            row = conn.execute(
-                "SELECT trace_consumed_id FROM trigger_feedback "
-                "WHERE session_id = ? AND trace_consumed_id IS NOT NULL "
-                "AND consumed_at >= ? "
-                "ORDER BY (trace_consumed_id LIKE 'local:%') ASC, "
-                "consumed_at DESC LIMIT 1",
-                (state_dir.name, err_t),
-            ).fetchone()
-            if row:
-                trace_id = row["trace_consumed_id"]
-            # Same precedence, applied to the stored row: a local: marker must
-            # never overwrite a commons id this signature already carries.
-            # record_resolution's COALESCE only protects NULL, and the
-            # recurrence injection renders trace_id as a real, fetchable id
-            # ("use get_trace with ID ...") — a local: marker there is noise.
-            if trace_id and str(trace_id).startswith("local:"):
-                prior = conn.execute(
-                    "SELECT trace_id FROM error_signatures "
-                    "WHERE project_id = ? AND signature = ?",
-                    (project_id, match["sig"]),
-                ).fetchone()
-                if prior and prior["trace_id"] and not str(
-                        prior["trace_id"]).startswith("local:"):
-                    trace_id = None
-        except Exception:
-            trace_id = None
-
-        record_resolution(conn, project_id, match["sig"],
-                          fix_command=redact_command(command[:200]),
-                          fix_files=fix_files[:10],
-                          trace_id=trace_id)
-
-        # Disclosure trailer: only for commons traces, never local markers
-        trailer_output = None
-        if trace_id and not str(trace_id).startswith("local:"):
-            trailer_output = _suggest_trailer(state_dir, trace_id)
-        conn.close()
-        return trailer_output
-    except Exception as e:
-        log_hook_error("resolution_pairing", e)
-        return None
-
-
-def _suggest_trailer(state_dir: Path, trace_id: str) -> dict | None:
-    """Resolved-with disclosure trailer — citation, not co-authorship.
-
-    Fires once per (session, trace). Config gate: "resolved_with_trailer"
-    (default on). The one-line opt-out is surfaced exactly once ever, on
-    first use ("trailer_notice_shown" persisted to config).
-    """
-    # Sanitize trace_id at entry: only alphanumeric and hyphens, max 64 chars.
-    # Prevents newlines/quotes/control chars from corrupting hook-protocol JSON.
-    safe_id = re.sub(r"[^A-Za-z0-9_-]", "", str(trace_id))[:64]
-    if not safe_id:
-        return None
-
-    try:
-        config = {}
-        if CONFIG_FILE.exists():
-            config = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        config = {}
-    if not config.get("resolved_with_trailer", True):
-        return None
-    suggested = {e.get("trace_id") for e in
-                 read_events(state_dir, "trailer_suggested.jsonl")}
-    if safe_id in suggested:
-        return None
-    append_event(state_dir, "trailer_suggested.jsonl", {"trace_id": safe_id})
-    parts = [
-        f"CommonTrace: trace {safe_id} contributed to this fix. "
-        f"If a commit comes out of it, the disclosure trailer is:\n"
-        f"Resolved-with: CommonTrace https://commontrace.org/t/{safe_id}\n"
-        f"(Citation, not co-authorship — add it at the end of the commit "
-        f"message if the user is fine with it.)"]
-    if not config.get("trailer_notice_shown"):
-        parts.append('One-line opt-out: set "resolved_with_trailer": false '
-                     "in ~/.commontrace/config.json.")
-        # Fresh-config RMW: re-read config file to avoid clobbering concurrent
-        # writes from other hook processes that ran between our initial load and
-        # this save. Apply mutation to the fresh dict; also update the
-        # in-memory dict so our caller stays consistent.
-        try:
-            fresh_config = {}
-            if CONFIG_FILE.exists():
-                fresh_config = json.loads(
-                    CONFIG_FILE.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            fresh_config = dict(config)
-        fresh_config["trailer_notice_shown"] = True
-        config["trailer_notice_shown"] = True
-        try:
-            CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-            CONFIG_FILE.write_text(json.dumps(fresh_config, indent=2),
-                                   encoding="utf-8")
-            os.chmod(CONFIG_FILE, 0o600)
-        except OSError:
-            pass
-    return {"hookSpecificOutput": {"hookEventName": "PostToolUse",
-                                   "additionalContext": " ".join(parts)}}
-
-
-def _check_error_recurrence(sig: str, state_dir: Path) -> dict | None:
-    """Record this error occurrence; on resolved recurrence, inject the fix.
-
-    Recording is exempt from the cooldown so seen_count stays accurate —
-    the cooldown gates only the injection. Injection fires when this
-    project has already resolved the same signature: the moment a past
-    lesson pays off. The injection is informational (never an instruction
-    to execute), names its provenance, and is remembered in
-    recurrence_injected.jsonl so a subsequent fix counts as an assisted
-    resolution (closes the trigger_feedback loop).
-    """
-    project_id = _read_project_id(state_dir)
-    if project_id is None:
-        return None
-
-    info = None
-    try:
-        from local_store import _get_conn, record_error_signature
-        conn = _get_conn()
-        info = record_error_signature(conn, project_id, sig)
-        conn.close()
-    except Exception as e:
-        log_hook_error("error_recurrence", e)
-        return None
-
-    if not info or not info.get("recurrence") or not info.get("resolved"):
-        return None
-
-    if is_on_cooldown("error_recurrence",
-                      _get_adaptive_cooldown("error_recurrence", 60, state_dir)):
-        return None
-    set_cooldown("error_recurrence")
-    _record_trigger_safe(state_dir, "error_recurrence")
-    append_event(state_dir, "recurrence_injected.jsonl", {"sig": sig})
-
-    when = time.strftime("%Y-%m-%d",
-                         time.localtime(info.get("last_seen_at", 0)))
-    parts = [
-        f"CommonTrace: this error has hit this project before "
-        f"(seen {info['seen_count']} times, last {when}) and was solved."
-    ]
-    if info.get("fix_command"):
-        parts.append(f"The fix was verified with: `{info['fix_command']}`.")
-    files = info.get("fix_files") or []
-    if files:
-        parts.append("Files changed for the fix: "
-                     + ", ".join(files[:5]) + ".")
-    if info.get("trace_id"):
-        parts.append(f"Full solution: use get_trace with ID "
-                     f"{info['trace_id']}.")
-    parts.append("(Source: this project's local CommonTrace history.)")
-    return {
-        "hookSpecificOutput": {
-            "hookEventName": "PostToolUse",
-            "additionalContext": " ".join(parts),
-        }
-    }
-
-
-def _check_domain_entry(file_path: str, state_dir: Path) -> dict | None:
-    """Trigger search when entering a language different from project primary language."""
-    if is_on_cooldown("domain_entry",
-                      _get_adaptive_cooldown("domain_entry", 120, state_dir)):
-        return None
-
-    ext = Path(file_path).suffix.lower()
-    lang = EXTENSION_TO_LANGUAGE.get(ext)
-    if not lang:
-        return None
-
-    project_id = _read_project_id(state_dir)
-    if project_id is None:
-        return None
-
-    try:
-        from local_store import _get_conn, get_project_context_by_id
-        conn = _get_conn()
-        # Resolve by the registered project_id (session cwd), NOT the edited
-        # file's parent dir — files under src/, api/, lib/… would otherwise
-        # miss the exact WHERE path=? lookup and never fire this pattern.
-        ctx = get_project_context_by_id(conn, project_id)
-        conn.close()
-
-        # Fire when editing in a language different from project's primary language
-        if ctx and ctx.get("language") != lang:
-            set_cooldown("domain_entry")
-            _record_trigger_safe(state_dir, "domain_entry")
-            api_key = load_api_key()
-            if api_key:
-                query = f"{lang} common patterns and gotchas"
-                results = search_commontrace(query, api_key)
-                if results:
-                    formatted = format_results(results)
-                    return {
-                        "hookSpecificOutput": {
-                            "hookEventName": "PostToolUse",
-                            "additionalContext": (
-                                f"You're working in {lang} "
-                                f"(project primary: {ctx.get('language', 'unknown')}). "
-                                f"CommonTrace found relevant knowledge:\n\n{formatted}\n\n"
-                                f"Use get_trace with the ID to read "
-                                f"the full solution."
-                            ),
-                        }
-                    }
-    except Exception as e:
-        log_hook_error("domain_entry", e)
-    return None
-
-
-# ── Knowledge candidate detection ────────────────────────────────────────
-
-def _detect_knowledge_candidates(tool_name: str, data: dict,
-                                  state_dir: Path) -> None:
-    """Detect knowledge crystallization moments from tool-use sequences.
-
-    Writes candidates to candidates.jsonl when a state transition occurs.
-    Each candidate captures the pattern type and surrounding context so
-    the stop hook can score importance and pre-assemble contribution drafts.
-    """
-    now = time.time()
-
-    # ── Search→Implement: research followed by code changes, no errors ──
-    if tool_name in ("Write", "Edit", "NotebookEdit"):
-        research = read_events(state_dir, "research.jsonl")
-        errors = read_events(state_dir, "errors.jsonl")
-        changes = read_events(state_dir, "changes.jsonl")
-
-        if research and not errors:
-            # Research happened, no errors — agent learned then implemented
-            last_research_t = max(r.get("t", 0) for r in research)
-            # Only fire if research was recent (within last 10 minutes)
-            if now - last_research_t < 600:
-                # Dedup: check if we already recorded this transition
-                if not _has_candidate(state_dir, "research_then_implement"):
-                    queries = [r.get("query", "")[:100] for r in research[-3:]]
-                    file_path = ""
-                    ti = data.get("tool_input", {})
-                    if isinstance(ti, dict):
-                        file_path = ti.get("file_path", "")
-                    append_event(state_dir, "candidates.jsonl", {
-                        "pattern": "research_then_implement",
-                        "research_queries": queries,
-                        "file": file_path,
-                        "research_count": len(research),
-                        "changes_count": len(changes) + 1,
-                    })
-
-    # ── Approach Reversal: Write to file previously Edit-ed 3+ times ──
-    if tool_name == "Write":
-        ti = data.get("tool_input", {})
-        file_path = ti.get("file_path", "") if isinstance(ti, dict) else ""
-        if file_path:
-            changes = read_events(state_dir, "changes.jsonl")
-            edit_count = sum(
-                1 for c in changes
-                if c.get("file") == file_path and c.get("tool") == "Edit"
-            )
-            if edit_count >= 3:
-                if not _has_candidate(state_dir, "approach_reversal",
-                                      file_path):
-                    append_event(state_dir, "candidates.jsonl", {
-                        "pattern": "approach_reversal",
-                        "file": file_path,
-                        "previous_edits": edit_count,
-                    })
-
-    # ── User Correction: same file changed before and after user message ──
-    if tool_name in ("Write", "Edit", "NotebookEdit"):
-        ti = data.get("tool_input", {})
-        file_path = ti.get("file_path", "") if isinstance(ti, dict) else ""
-        # Skip docs-only (*.md) edits — re-touching a markdown file across a
-        # user turn is note-writing, not a redirected approach.
-        if file_path and not _is_docs_only(file_path):
-            user_turns = read_events(state_dir, "user_turns.jsonl")
-            changes = read_events(state_dir, "changes.jsonl")
-            if user_turns and len(changes) >= 2:
-                last_turn_t = max(u.get("t", 0) for u in user_turns)
-                # Changes to same file BEFORE the last user turn
-                pre_turn_edits = [
-                    c for c in changes
-                    if c.get("file") == file_path
-                    and c.get("t", 0) < last_turn_t
-                ]
-                # Current edit is AFTER user turn (we're in post_tool_use)
-                if pre_turn_edits and now > last_turn_t:
-                    if not _has_candidate(state_dir, "user_correction",
-                                          file_path):
-                        append_event(state_dir, "candidates.jsonl", {
-                            "pattern": "user_correction",
-                            "file": file_path,
-                            "pre_turn_edits": len(pre_turn_edits),
-                        })
-
-    # ── Test Fix Cycle: test fails → code changes → test passes ──
-    if tool_name == "Bash":
-        ti = data.get("tool_input", {})
-        command = ti.get("command", "") if isinstance(ti, dict) else ""
-        is_error, output, error_text = detect_bash_error(data)
-        if not is_error and any(tc in command for tc in TEST_COMMANDS):
-            errors = read_events(state_dir, "errors.jsonl")
-            changes = read_events(state_dir, "changes.jsonl")
-            test_failures = [
-                e for e in errors
-                if any(tc in e.get("command", "") for tc in TEST_COMMANDS)
-            ]
-            non_test_changes = [
-                c for c in changes
-                if "test" not in c.get("file", "").lower()
-                and "spec" not in c.get("file", "").lower()
-            ]
-            if test_failures and non_test_changes:
-                if not _has_candidate(state_dir, "test_fix_cycle"):
-                    append_event(state_dir, "candidates.jsonl", {
-                        "pattern": "test_fix_cycle",
-                        "test_failures": len(test_failures),
-                        "fix_files": [
-                            c.get("file") for c in non_test_changes[:5]
-                        ],
-                    })
-
-
-def _has_candidate(state_dir: Path, pattern: str,
-                   extra_key: str = "") -> bool:
-    """Check if a knowledge candidate of this type already exists."""
-    candidates = read_events(state_dir, "candidates.jsonl")
-    for c in candidates:
-        if c.get("pattern") == pattern:
-            if extra_key and c.get("file") != extra_key:
-                continue
-            return True
-    return False
-
-
-def _check_pre_code(file_path: str, tool_name: str,
-                    state_dir: Path = None) -> dict | None:
-    """Trigger search before implementing a new file."""
-    if tool_name != "Write":
-        return None
-    cd = _get_adaptive_cooldown("pre_code", 180, state_dir) if state_dir else 180
-    if is_on_cooldown("pre_code", cd):
-        return None
-    if Path(file_path).exists():
-        return None
-
-    ext = Path(file_path).suffix.lower()
-    lang = EXTENSION_TO_LANGUAGE.get(ext)
-    if not lang:
-        return None
-
-    set_cooldown("pre_code")
-    if state_dir:
-        _record_trigger_safe(state_dir, "pre_code")
-    api_key = load_api_key()
-    if api_key:
-        name = Path(file_path).stem.lower()
-        query = f"{lang} {name} implementation patterns"
-        results = search_commontrace(query, api_key)
-        if results:
-            formatted = format_results(results)
-            return {
-                "hookSpecificOutput": {
-                    "hookEventName": "PostToolUse",
-                    "additionalContext": (
-                        f"Before implementing {Path(file_path).name}, "
-                        f"CommonTrace found relevant patterns:\n\n"
-                        f"{formatted}\n\n"
-                        f"Use get_trace with the ID to read "
-                        f"the full solution."
-                    ),
-                }
-            }
     return None
 
 
@@ -1051,7 +181,7 @@ def handle_trace_consumption(data: dict, state_dir: Path) -> None:
             cache_trace_pointer,
         )
         session_id = state_dir.name
-        project_id = _read_project_id(state_dir)
+        project_id = read_project_id(state_dir)
         conn = _get_conn()
         record_trace_consumed(conn, session_id, trace_id)
         mark_trace_used_v2(conn, trace_id, project_id)
@@ -1070,19 +200,16 @@ def handle_trace_consumption(data: dict, state_dir: Path) -> None:
 
 def handle_contribution(data: dict, state_dir: Path) -> None:
     """Handle MCP contribute_trace: record contribution + store locally."""
-    tool_response = data.get("tool_response", {})
-    response_text = str(tool_response)
+    response_text = str(data.get("tool_response", {}))
 
     match = re.search(
         r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
         r"[0-9a-f]{4}-[0-9a-f]{12}", response_text)
     trace_id = match.group(0) if match else ""
 
-    append_event(state_dir, "contributions.jsonl", {
-        "trace_id": trace_id,
-    })
+    append_event(state_dir, "contributions.jsonl", {"trace_id": trace_id})
 
-    # Record turn count at contribution time so Stop hook can detect
+    # Record turn count at contribution time so the Stop hook can detect
     # how many user messages came AFTER the contribution
     try:
         path = state_dir / "user_turn_count"
@@ -1092,27 +219,23 @@ def handle_contribution(data: dict, state_dir: Path) -> None:
     except (ValueError, OSError):
         pass
 
-    # Cache pointer to contributed trace (title only — API is source of truth)
-    # trace_id comes from the API contribution response, not from tool_input
-    tool_result = data.get("tool_response", {})
-    response_trace_id = trace_id  # already extracted from response text above
-    if response_trace_id:
-        try:
-            from local_store import _get_conn, cache_trace_pointer
-            tool_input = data.get("tool_input", {})
-            if isinstance(tool_input, dict):
-                title = tool_input.get("title", "")
-                if title:
-                    project_id = _read_project_id(state_dir)
-                    conn = _get_conn()
-                    cache_trace_pointer(conn, response_trace_id, project_id,
-                                        title, source="contributed")
-                    conn.close()
-        except Exception as e:
-            log_hook_error("contribution_cache", e)
-
-
-    # No local storage update needed — trace_cache stores only title.
+    # Cache a pointer to the contributed trace (title only — the API is the
+    # source of truth). trace_id comes from the contribution RESPONSE, not
+    # from tool_input.
+    if not trace_id:
+        return
+    try:
+        tool_input = data.get("tool_input", {})
+        if isinstance(tool_input, dict):
+            title = tool_input.get("title", "")
+            if title:
+                from local_store import _get_conn, cache_trace_pointer
+                conn = _get_conn()
+                cache_trace_pointer(conn, trace_id, read_project_id(state_dir),
+                                    title, source="contributed")
+                conn.close()
+    except Exception as e:
+        log_hook_error("contribution_cache", e)
 
 
 # ── Main ─────────────────────────────────────────────────────────────────

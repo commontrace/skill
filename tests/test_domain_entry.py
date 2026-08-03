@@ -14,7 +14,7 @@ row, which is also what the adaptive cooldown reads back.
 
 import unittest
 
-from tests.base import HookTestCase, local_store, post_tool_use
+from tests.base import HookTestCase, local_store, retrieval
 
 
 class TestDomainEntry(HookTestCase):
@@ -34,7 +34,7 @@ class TestDomainEntry(HookTestCase):
     def test_fires_for_file_in_subdirectory(self):
         """Editing a rust file under /proj/src must fire domain_entry."""
         self._register(path="/proj", language="python")
-        out = post_tool_use._check_domain_entry("/proj/src/foo.rs", self.state_dir)
+        out = retrieval._check_domain_entry("/proj/src/foo.rs", self.state_dir)
         self.assertIsNotNone(
             self._fired(), "domain_entry did not fire for a subdir file")
         # Offline: no API key → no additionalContext, but firing still recorded.
@@ -42,18 +42,18 @@ class TestDomainEntry(HookTestCase):
 
     def test_fires_for_deeply_nested_file(self):
         self._register(path="/proj", language="python")
-        post_tool_use._check_domain_entry(
+        retrieval._check_domain_entry(
             "/proj/api/app/routers/foo.go", self.state_dir)
         self.assertIsNotNone(self._fired())
 
     def test_same_language_does_not_fire(self):
         """A .py edit in a python project (any depth) must NOT fire."""
         self._register(path="/proj", language="python")
-        post_tool_use._check_domain_entry("/proj/src/foo.py", self.state_dir)
+        retrieval._check_domain_entry("/proj/src/foo.py", self.state_dir)
         self.assertIsNone(self._fired())
 
     def test_no_project_bridge_is_silent(self):
-        out = post_tool_use._check_domain_entry("/proj/src/foo.rs", self.state_dir)
+        out = retrieval._check_domain_entry("/proj/src/foo.rs", self.state_dir)
         self.assertIsNone(out)
         self.assertIsNone(self._fired())
 

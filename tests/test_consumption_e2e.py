@@ -29,6 +29,7 @@ from tests.base import HookTestCase, HOOKS_DIR, read_events  # noqa: F401
 
 import post_tool_use  # noqa: E402
 import session_state  # noqa: E402
+import session_report  # noqa: E402
 import stop  # noqa: E402
 
 
@@ -148,7 +149,7 @@ class TestConsumptionEndToEnd(HookTestCase):
             "the consumption_rate the analytics endpoint reports")
 
         # ── 6. What stop.py actually POSTs to /api/v1/telemetry/triggers ──
-        counters = stop._session_counters(conn, d2, pid)
+        counters = session_report._session_counters(conn, d2, pid)
         self.assertGreater(counters["searches_fired"], 0)
         self.assertGreater(counters["traces_consumed"], 0,
                            "traces_consumed is the flat-zero product metric")

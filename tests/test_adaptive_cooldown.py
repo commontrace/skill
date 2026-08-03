@@ -3,7 +3,7 @@
 import json
 import unittest
 
-from tests.base import HookTestCase, post_tool_use
+from tests.base import HookTestCase, retrieval
 
 
 class TestAdaptiveCooldown(HookTestCase):
@@ -15,12 +15,12 @@ class TestAdaptiveCooldown(HookTestCase):
     def test_ineffective_trigger_is_suppressed(self):
         self._write_stats("bash_error", fired=25, rate=0.0)
         self.assertEqual(
-            post_tool_use._get_adaptive_cooldown(
+            retrieval._get_adaptive_cooldown(
                 "bash_error", 30, self.state_dir), 90)
 
     def test_epsilon_floor_every_tenth_check_explores(self):
         self._write_stats("bash_error", fired=25, rate=0.0)
-        values = [post_tool_use._get_adaptive_cooldown(
+        values = [retrieval._get_adaptive_cooldown(
             "bash_error", 30, self.state_dir) for _ in range(10)]
         self.assertEqual(values[:9], [90] * 9)
         self.assertEqual(values[9], 30)  # exploration fires on the 10th
@@ -28,24 +28,24 @@ class TestAdaptiveCooldown(HookTestCase):
     def test_effective_trigger_halves_cooldown(self):
         self._write_stats("bash_error", fired=10, rate=0.5)
         self.assertEqual(
-            post_tool_use._get_adaptive_cooldown(
+            retrieval._get_adaptive_cooldown(
                 "bash_error", 30, self.state_dir), 15)
 
     def test_few_firings_no_suppression(self):
         self._write_stats("bash_error", fired=10, rate=0.0)
         self.assertEqual(
-            post_tool_use._get_adaptive_cooldown(
+            retrieval._get_adaptive_cooldown(
                 "bash_error", 30, self.state_dir), 30)
 
     def test_legacy_total_key_still_suppresses(self):
         self._write_stats("bash_error", fired=25, rate=0.0, key="total")
         self.assertEqual(
-            post_tool_use._get_adaptive_cooldown(
+            retrieval._get_adaptive_cooldown(
                 "bash_error", 30, self.state_dir), 90)
 
     def test_no_stats_file_returns_base(self):
         self.assertEqual(
-            post_tool_use._get_adaptive_cooldown(
+            retrieval._get_adaptive_cooldown(
                 "bash_error", 30, self.state_dir), 30)
 
 

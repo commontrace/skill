@@ -19,7 +19,7 @@ _POSIX_ONLY = unittest.skipIf(
 
 from base import HookTestCase
 
-import post_tool_use
+import retrieval
 import session_start
 import session_state
 import stop
@@ -390,7 +390,7 @@ class TestSilentSuccessSweep(OnboardingTestCase):
         with mock.patch.object(
                 urllib.request, "urlopen",
                 side_effect=urllib.error.URLError("offline")):
-            results = post_tool_use.search_commontrace("q", "k")
+            results = retrieval.search_commontrace("q", "k")
         self.assertEqual(results, [])
         self.assertIn("[search_commontrace]", self._log_text())
 
