@@ -6,7 +6,7 @@ candidates.jsonl for stop.py to score:
 
   research_then_implement — searched the web, then wrote code, no errors
   approach_reversal       — rewrote a file that had been Edit-ed 3+ times
-  user_correction         — same file edited before AND after a user turn
+  post_turn_revision         — same file edited before AND after a user turn
   test_fix_cycle          — tests failed, non-test code changed, tests pass
 
 The fifth scored pattern, error_resolution, leaves no candidate: stop.py
@@ -43,7 +43,7 @@ def _is_docs_only(file_path: str) -> bool:
 
     A markdown edit made after a user turn is almost always the agent writing
     up notes, not the user redirecting a wrong approach — surfacing it as a
-    high-value ``user_correction`` was noisy and misleading. Exclude docs.
+    high-value ``post_turn_revision`` was noisy and misleading. Exclude docs.
     """
     return Path(file_path).suffix.lower() in _DOCS_EXTENSIONS
 
@@ -109,7 +109,7 @@ def _detect_approach_reversal(data: dict, state_dir: Path) -> None:
     })
 
 
-def _detect_user_correction(data: dict, state_dir: Path, now: float) -> None:
+def _detect_post_turn_revision(data: dict, state_dir: Path, now: float) -> None:
     """Same file touched before AND after a user turn: the user redirected."""
     file_path = _tool_file_path(data)
     # Skip docs-only (*.md) edits — re-touching a markdown file across a
@@ -128,10 +128,10 @@ def _detect_user_correction(data: dict, state_dir: Path, now: float) -> None:
     # The current edit is AFTER the user turn (we are in post_tool_use).
     if not pre_turn_edits or now <= last_turn_t:
         return
-    if _has_candidate(state_dir, "user_correction", file_path):
+    if _has_candidate(state_dir, "post_turn_revision", file_path):
         return
     append_event(state_dir, "candidates.jsonl", {
-        "pattern": "user_correction",
+        "pattern": "post_turn_revision",
         "file": file_path,
         "pre_turn_edits": len(pre_turn_edits),
     })
@@ -175,7 +175,7 @@ def _detect_knowledge_candidates(tool_name: str, data: dict,
 
     if tool_name in _CODE_TOOLS:
         _detect_research_then_implement(data, state_dir, now)
-        _detect_user_correction(data, state_dir, now)
+        _detect_post_turn_revision(data, state_dir, now)
     if tool_name == "Write":
         _detect_approach_reversal(data, state_dir)
     if tool_name == "Bash":

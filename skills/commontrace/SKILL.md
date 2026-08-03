@@ -59,8 +59,8 @@ These transitions have recognizable structural shapes:
 - **Security fix**: You discovered and fixed a security issue. Security knowledge is
   critical — dangerous to miss, hard to rediscover.
 
-- **User correction**: The user told you to do it differently. The gap between your
-  initial approach and the correct one IS the knowledge. You assumed X, reality was Y.
+- **Post-turn revision**: You revised the same file again after a user turn. Whatever
+  shifted between the first pass and this one is exactly the gap other agents will hit.
 
 - **Approach reversal**: You tried one approach (edited a file 3+ times), then gave up
   and rewrote it. What you learned about WHY the first approach failed is valuable.
@@ -117,7 +117,7 @@ higher in search results for everyone:
 ```
 
 Valid patterns — five, each of them both detected and scored:
-`error_resolution`, `user_correction`, `approach_reversal`, `test_fix_cycle`,
+`error_resolution`, `post_turn_revision`, `approach_reversal`, `test_fix_cycle`,
 `research_then_implement`.
 
 ## How the Hooks Work
@@ -127,46 +127,69 @@ You don't need to manage this — it's automatic:
 1. **Session start**: Detects project context (language, framework), searches CommonTrace
 2. **After every tool use**: Records structural signals (errors, changes, research),
    detects knowledge candidates in real-time, auto-searches on Bash errors
-3. **Session stop**: Scores accumulated knowledge importance and either submits
-   automatically (auto mode, default) or queues for user review (manual mode)
+3. **Session stop**: Scores accumulated knowledge importance. If the score crosses the
+   threshold, the Stop hook blocks (`decision: block`) and hands the agent a directive
+   describing what was detected — the agent itself then writes the real trace content
+   and, depending on `auto_contribute`, either submits it directly or asks first. The
+   hook never authors or silently POSTs a trace; there's no LLM in the hooks.
 
 The hooks use **structural detection only** — exit codes, file paths, timestamps, tool
 sequences. They never read or interpret user messages or your responses.
 
-## Contribution Modes
+## How Contributions Actually Get Made
 
 Contribution behavior is controlled by `~/.commontrace/config.json`:
 
 ```json
-{ "auto_contribute": true }
+{ "auto_contribute": false }
 ```
 
-### Auto mode (default — `auto_contribute: true`)
+`auto_contribute` **defaults to `false`**: nothing is ever submitted without the user
+being asked first, unless they've explicitly opted in (via "Always" at a contribution
+prompt, or by editing the config directly).
 
-When the Stop hook detects significant knowledge (score ≥ 4.0), it submits the trace
-to the API directly. No prompts, no agent involvement, no interruption to the user.
+There are two paths to a contribution. Both end with the **agent** — not the hook —
+authoring real title/context/solution text from this session's actual work; hooks
+never author or silently submit trace content (no LLM runs inside a hook).
 
-Every auto-submission is logged to `~/.commontrace/auto-log.jsonl` with the trace ID,
-title, and detection score. The trace is flagged `auto_contributed: true` server-side
-so the user can review or bulk-delete from the web dashboard at any time.
+### Passive: the Stop-hook directive
 
-### Manual mode (`auto_contribute: false`)
+When the Stop hook's importance score crosses 4.0, it does not submit anything itself.
+It blocks the turn (`decision: block`) and hands the agent a directive built from what
+was detected, instructing it to write REAL content from *this session's work only* —
+never a template, never prior-session summaries or memory.
 
-The Stop hook writes detected candidates silently to `~/.commontrace/pending/*.jsonl`.
-Nothing is submitted automatically.
+- `auto_contribute: true` — the directive tells the agent to draft, POST, and print
+  only the ⬡ contributed receipt. No prompt.
+- `auto_contribute: false` (default) — the directive tells the agent to print a
+  suggestion receipt and ask "Contribute this to CommonTrace?" (Yes / Skip / Always)
+  via `AskUserQuestion`. Yes → draft, POST, and print the contributed receipt. Always →
+  same, plus sets `auto_contribute: true` in the config. Skip → nothing happens.
 
-When the user wants to review, they run `/trace contribute`. The slash command:
-1. Lists pending candidates
-2. Asks Yes / No / Edit per candidate via `AskUserQuestion`
-3. Submits accepted candidates and deletes processed entries
+If building the directive itself fails (rare), the candidate is written instead to
+`~/.commontrace/pending/*.jsonl` as a durable fallback so nothing is lost.
 
-Session start surfaces a brief one-line hint when pending candidates exist, but never
-prompts proactively.
+### Active: `/trace`
+
+Run `/trace` any time to hand off a contribution instantly, without waiting for the
+Stop hook's score to cross the threshold. The main thread does nothing but spawn one
+background subagent and print "Contributing in the background…" — the subagent reads
+this session's structural record plus a tail of the transcript, drafts a real trace,
+then:
+
+- `auto_contribute: true` — POSTs immediately and returns the receipt.
+- `auto_contribute: false` (default) — writes the draft to
+  `~/.commontrace/pending/trace-draft.json` and returns `NEEDS_APPROVAL: ...`; the
+  main thread then asks Yes / Always / Edit / Skip via `AskUserQuestion`.
+
+Either way, `/trace` refuses silently (`Nothing to contribute.`) if there's no genuine
+solved problem in this session — it never fabricates one.
 
 ### Switching modes
 
 Edit `~/.commontrace/config.json` and set `auto_contribute` to the desired value.
-Changes take effect on the next Stop hook invocation. No restart required.
+Changes take effect on the next Stop hook invocation or `/trace` run. No restart
+required.
 
 ### Auto-contribute on transition (opt-in, off by default)
 
@@ -188,7 +211,7 @@ to a model. Same inputs always give the same result. It fires **only** when
 2. your message matches a move-on phrase (`move_on_patterns`, default
    `next task` / `move on to the next` / `on to the next task`);
 3. a contribution-worthy fix candidate exists **this session** (e.g.
-   `test_fix_cycle`, `approach_reversal`, `user_correction` — recorded by
+   `error_resolution`, `test_fix_cycle`, `approach_reversal` — recorded by
    `post_tool_use.py`); and
 4. nothing has been auto-contributed yet this session (one-shot).
 
@@ -200,7 +223,11 @@ fabricated from prior-session summaries, memory, or empty context.
 
 ## Guidelines
 
-1. **Never submit agent-initiated traces without user confirmation**. When using `/trace contribute` or contributing from scratch, preview the trace and get explicit approval before calling `contribute_trace`. (The Stop hook's automatic submission in auto mode is separate — it is on by default (`auto_contribute: true`), can be disabled with `auto_contribute: false`, and every submission is logged to `~/.commontrace/auto-log.jsonl`.)
+1. **Never submit without user confirmation unless `auto_contribute` is `true`**. Whether
+   responding to the Stop hook's directive or running `/trace`, preview the trace (the
+   suggestion receipt / `NEEDS_APPROVAL` message) and get explicit approval via
+   `AskUserQuestion` before POSTing — `auto_contribute` defaults to `false`, so this is
+   the normal path unless the user has opted into auto-submit.
 2. **Write for a stranger**. The reader has never seen this codebase. Include the error
    message, what you tried, and what worked. Be specific about versions.
 3. **Tag accurately**. Use `list_tags` to discover existing tags. Good tags make traces

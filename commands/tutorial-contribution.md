@@ -59,7 +59,7 @@ Round 1 runs immediately when this command is invoked (invoking it is the "fix t
      "context_text": "A payments webhook charged the customer twice. First guesses were wrong: wrapping the charge in try/except (assuming a retry-on-error) did nothing, and a naive in-function dedup by amount did nothing because it never persisted across separate deliveries. Stripe delivers each event at least once, so a retried or duplicated charge.succeeded event was processed twice.",
      "solution_text": "Make the handler idempotent by keying on the Stripe event id, which is stable across retries: `if store.seen_event(event['id']): return`. Record processed event ids so a duplicate delivery becomes a no-op. Error handling and amount-based dedup do not solve it; the event id is the stable idempotency key. Verified by a test that delivers the same event twice and asserts a single charge.",
      "tags": ["python", "fastapi", "stripe", "webhooks", "idempotency"],
-     "metadata_json": {"detection_pattern": "user_correction", "time_to_resolution_minutes": 12, "error_count": 2, "iteration_count": 3, "tokens_to_resolution": 240000},
+     "metadata_json": {"detection_pattern": "post_turn_revision", "time_to_resolution_minutes": 12, "error_count": 2, "iteration_count": 3, "tokens_to_resolution": 240000},
    }
    req = urllib.request.Request(f"{base}/api/v1/traces",
        data=json.dumps(body).encode(), method="POST",

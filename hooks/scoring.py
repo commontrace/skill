@@ -5,7 +5,7 @@ as candidates written by detection.py; error_resolution is derived here
 from the raw error / change / resolution streams.
 
   error_resolution:        3.0  — error → fix → verified
-  user_correction:         2.5  — the user redirected the approach
+  post_turn_revision:         2.5  — the user redirected the approach
   approach_reversal:       2.5  — rewrote after iterating (paradigm shift)
   test_fix_cycle:          2.0  — test fails → fix code → test passes
   research_then_implement: 2.0  — searched, then coded, no errors
@@ -33,7 +33,7 @@ IMPORTANCE_THRESHOLD = 4.0
 # detected that isn't scored.
 PATTERN_WEIGHTS = {
     "error_resolution": 3.0,
-    "user_correction": 2.5,
+    "post_turn_revision": 2.5,
     "approach_reversal": 2.5,
     "test_fix_cycle": 2.0,
     "research_then_implement": 2.0,
@@ -52,7 +52,7 @@ _EVIDENCE_FIELDS = {
     "research_then_implement": {
         "research_queries": [], "research_count": 0, "file": ""},
     "approach_reversal": {"file": "", "previous_edits": 0},
-    "user_correction": {"file": "", "pre_turn_edits": 0},
+    "post_turn_revision": {"file": "", "pre_turn_edits": 0},
     "test_fix_cycle": {"test_failures": 0, "fix_files": []},
 }
 # Evidence lists are only ever read for display; keep them short.

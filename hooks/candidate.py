@@ -220,7 +220,7 @@ def _build_candidate(score: float, top_pattern: str, evidence: dict,
             f"a sign that the initial approach was wrong. "
             f"What you learned about WHY is valuable knowledge."
         ),
-        "user_correction": (
+        "post_turn_revision": (
             f"You changed approach on {Path(evidence.get('file', '')).name} "
             f"after user feedback — the gap between your initial approach and "
             f"the correct one is exactly the knowledge other agents need."

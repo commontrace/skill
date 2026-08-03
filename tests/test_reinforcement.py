@@ -19,7 +19,7 @@ class ReinforcementUnitTest(unittest.TestCase):
         assert out["rate"] == round(4 / 6, 2)
 
     def test_pattern_effectiveness_unmapped_is_none(self):
-        assert scoring._pattern_effectiveness("user_correction", {}) is None
+        assert scoring._pattern_effectiveness("post_turn_revision", {}) is None
 
     def test_pattern_effectiveness_zero_fired_is_none(self):
         eff = {"bash_error": {"fired": 0, "consumed": 0, "rate": 0.0}}
@@ -51,10 +51,10 @@ class ReinforcementUnitTest(unittest.TestCase):
         assert scores["error_resolution"] == 3.0
 
     def test_apply_reinforcement_unmapped_unchanged(self):
-        scores = {"user_correction": 2.5}
+        scores = {"post_turn_revision": 2.5}
         eff = {"error_recurrence": {"fired": 9, "consumed": 9, "rate": 1.0}}
         scoring._apply_reinforcement(scores, eff)
-        assert scores["user_correction"] == 2.5
+        assert scores["post_turn_revision"] == 2.5
 
     def test_apply_reinforcement_zero_score_skips(self):
         scores = {"error_resolution": 0.0}

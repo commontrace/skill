@@ -5,7 +5,7 @@ CommonTrace UserPromptSubmit hook — Layer 1 state writer + first-turn nudge.
 Increments the user turn counter in session state. On the first user turn,
 injects a brief reminder to search CommonTrace before solving problems.
 
-The turn timestamps recorded here are what makes `user_correction`
+The turn timestamps recorded here are what makes `post_turn_revision`
 detectable in post_tool_use.py: a file edited both before and after a user
 turn. The prompt TEXT is never analyzed — no keyword lexicon, no emphasis
 scoring, no NLU.
@@ -58,7 +58,7 @@ _ENV_TRUTHY = {"1", "true", "yes", "on"}
 # minus error_resolution, which leaves no candidate row (stop.py derives it
 # from the event streams instead).
 CONTRIBUTION_WORTHY_PATTERNS = {
-    "test_fix_cycle", "approach_reversal", "user_correction",
+    "test_fix_cycle", "approach_reversal", "post_turn_revision",
     "research_then_implement",
 }
 
@@ -199,7 +199,7 @@ def main() -> None:
     state_dir = get_state_dir(data)
     count = increment_counter(state_dir, "user_turn_count")
 
-    # Record timestamp for user_correction detection in post_tool_use
+    # Record timestamp for post_turn_revision detection in post_tool_use
     append_event(state_dir, "user_turns.jsonl", {"turn": count})
 
     prompt = data.get("prompt", "")

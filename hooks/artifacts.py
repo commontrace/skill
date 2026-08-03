@@ -40,7 +40,7 @@ TEMP_COLORS = {"hot": "#e25822", "warm": "#e8a33d", "cool": "#4f86c6",
                "cold": "#7a8b99", "frozen": "#b9c4cc"}
 # The five patterns the skill detects and scores today.
 ACTIVE_PATTERNS = frozenset({
-    "error_resolution", "user_correction", "approach_reversal",
+    "error_resolution", "post_turn_revision", "approach_reversal",
     "test_fix_cycle", "research_then_implement",
 })
 # Patterns retired in v1.5. Kept ONLY as a rendering allow-list: sessions
@@ -52,6 +52,9 @@ RETIRED_PATTERNS = frozenset({
     "generation_effect", "cross_file_breadth", "iteration_depth",
     "workaround", "temporal_investment", "fail_then_succeed",
     "user_emphasis",
+    # Alias historique : les traces contribuées avant le renommage
+    # user_correction -> post_turn_revision portent encore l'ancien nom.
+    "user_correction",
 })
 # Whitelist for rendering DB text — never widen with unvetted values.
 KNOWN_PATTERNS = ACTIVE_PATTERNS | RETIRED_PATTERNS
