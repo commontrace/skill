@@ -171,6 +171,24 @@ def increment_counter(state_dir: Path, filename: str) -> int:
     return count
 
 
+def read_project_id(state_dir: Path) -> int | None:
+    """Read the project_id bridge file written by session_start."""
+    try:
+        return int((state_dir / "project_id").read_text(
+            encoding="utf-8").strip())
+    except (ValueError, OSError):
+        return None
+
+
+def read_context_fingerprint(state_dir: Path) -> dict | None:
+    """Read the context fingerprint bridge file written by session_start."""
+    try:
+        return json.loads((state_dir / "context_fingerprint.json").read_text(
+            encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
 def error_hash(text: str) -> str:
     """Short hash for deduplicating errors."""
     return hashlib.sha256(text[:300].encode()).hexdigest()[:10]

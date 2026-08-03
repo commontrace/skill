@@ -4,21 +4,21 @@ import json
 import unittest
 
 from tests.base import (
-    HookTestCase, append_event, local_store, post_tool_use, read_events,
+    HookTestCase, append_event, local_store, read_events, resolution,
 )
 
 
 class TestCommandHead(HookTestCase):
     def test_plain_command(self):
-        self.assertEqual(post_tool_use._command_head("pytest tests/ -v"),
+        self.assertEqual(resolution._command_head("pytest tests/ -v"),
                          "pytest")
 
     def test_skips_env_assignment_prefix(self):
-        self.assertEqual(post_tool_use._command_head("FOO=1 BAR=2 pytest -x"),
+        self.assertEqual(resolution._command_head("FOO=1 BAR=2 pytest -x"),
                          "pytest")
 
     def test_empty_command(self):
-        self.assertEqual(post_tool_use._command_head(""), "")
+        self.assertEqual(resolution._command_head(""), "")
 
 
 class TestPairResolution(HookTestCase):
@@ -34,7 +34,7 @@ class TestPairResolution(HookTestCase):
         self._seed_error(conn)
         append_event(self.state_dir, "changes.jsonl", {
             "tool": "Edit", "file": "/repo/src/api.py", "t": 150.0})
-        post_tool_use._pair_resolution(
+        resolution._pair_resolution(
             self.state_dir, "pytest tests/ -v",
             read_events(self.state_dir, "errors.jsonl"))
         row = conn.execute(
@@ -47,7 +47,7 @@ class TestPairResolution(HookTestCase):
     def test_pairing_requires_same_command_head(self):
         conn = self.get_conn()
         self._seed_error(conn)
-        post_tool_use._pair_resolution(
+        resolution._pair_resolution(
             self.state_dir, "ls -la",
             read_events(self.state_dir, "errors.jsonl"))
         row = conn.execute(
@@ -61,7 +61,7 @@ class TestPairResolution(HookTestCase):
         append_event(self.state_dir, "errors.jsonl", {
             "source": "tool_failure", "tool": "Edit", "error": "x", "t": 90.0})
         # Must not raise and must not write anything
-        post_tool_use._pair_resolution(
+        resolution._pair_resolution(
             self.state_dir, "pytest",
             read_events(self.state_dir, "errors.jsonl"))
         n = conn.execute(
@@ -75,7 +75,7 @@ class TestPairResolution(HookTestCase):
         sid = self.state_dir.name
         local_store.record_trigger(conn, sid, "bash_error")
         local_store.record_trace_consumed(conn, sid, "trace-42")
-        post_tool_use._pair_resolution(
+        resolution._pair_resolution(
             self.state_dir, "pytest tests/",
             read_events(self.state_dir, "errors.jsonl"))
         row = conn.execute(
@@ -90,7 +90,7 @@ class TestPairResolution(HookTestCase):
         local_store.record_trigger(conn, sid, "error_recurrence")
         append_event(self.state_dir, "recurrence_injected.jsonl",
                      {"sig": "sig-x", "t": 101.0})
-        post_tool_use._pair_resolution(
+        resolution._pair_resolution(
             self.state_dir, "pytest tests/",
             read_events(self.state_dir, "errors.jsonl"))
         row = conn.execute(

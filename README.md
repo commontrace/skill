@@ -142,9 +142,9 @@ model or classified. The trigger fires **only** when **all** of:
 1. the feature is enabled (`CT_AUTO_CONTRIBUTE_ON_MOVE_ON=1` or
    `auto_contribute_on_move_on: true`),
 2. your message matches a `move_on_patterns` phrase,
-3. a contribution-worthy fix candidate exists **this session** (an
-   `error_resolution` / `test_fix_cycle` / `config_discovery` / … candidate
-   recorded by `post_tool_use.py`), and
+3. a contribution-worthy fix candidate exists **this session** (a
+   `test_fix_cycle` / `approach_reversal` / `user_correction` /
+   `research_then_implement` candidate recorded by `post_tool_use.py`), and
 4. nothing has been auto-contributed yet this session (one-shot per session).
 
 **Off by default** so real users' existing Stop-prompt flow is unchanged;

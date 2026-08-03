@@ -2,21 +2,21 @@
 
 import unittest
 
-from tests.base import HookTestCase, local_store, post_tool_use
+from tests.base import HookTestCase, local_store, retrieval
 
 
 class TestErrorRecurrence(HookTestCase):
     def test_first_error_injects_nothing(self):
         conn = self.get_conn()
         self.write_project_bridge(conn)
-        out = post_tool_use._check_error_recurrence("sig-x", self.state_dir)
+        out = retrieval._check_error_recurrence("sig-x", self.state_dir)
         self.assertIsNone(out)
 
     def test_unresolved_recurrence_injects_nothing(self):
         conn = self.get_conn()
         pid = self.write_project_bridge(conn)
         local_store.record_error_signature(conn, pid, "sig-x")
-        out = post_tool_use._check_error_recurrence("sig-x", self.state_dir)
+        out = retrieval._check_error_recurrence("sig-x", self.state_dir)
         self.assertIsNone(out)
 
     def test_resolved_recurrence_injects_fix(self):
@@ -26,7 +26,7 @@ class TestErrorRecurrence(HookTestCase):
         local_store.record_resolution(
             conn, pid, "sig-x", fix_command="npm test",
             fix_files=["api.ts"], trace_id="t-9")
-        out = post_tool_use._check_error_recurrence("sig-x", self.state_dir)
+        out = retrieval._check_error_recurrence("sig-x", self.state_dir)
         self.assertIsNotNone(out)
         self.assertEqual(
             out["hookSpecificOutput"]["hookEventName"], "PostToolUse")
@@ -41,7 +41,7 @@ class TestErrorRecurrence(HookTestCase):
         pid = self.write_project_bridge(conn)
         local_store.record_error_signature(conn, pid, "sig-x")
         local_store.record_resolution(conn, pid, "sig-x", fix_command="make")
-        post_tool_use._check_error_recurrence("sig-x", self.state_dir)
+        retrieval._check_error_recurrence("sig-x", self.state_dir)
         row = conn.execute(
             "SELECT trigger_name FROM trigger_feedback WHERE session_id = ?",
             (self.state_dir.name,)).fetchone()
@@ -55,9 +55,9 @@ class TestErrorRecurrence(HookTestCase):
         pid = self.write_project_bridge(conn)
         local_store.record_error_signature(conn, pid, "sig-x")
         local_store.record_resolution(conn, pid, "sig-x", fix_command="make")
-        first = post_tool_use._check_error_recurrence("sig-x", self.state_dir)
+        first = retrieval._check_error_recurrence("sig-x", self.state_dir)
         self.assertIsNotNone(first)
-        second = post_tool_use._check_error_recurrence("sig-x", self.state_dir)
+        second = retrieval._check_error_recurrence("sig-x", self.state_dir)
         self.assertIsNone(second)  # 60s cooldown active
         row = conn.execute(
             "SELECT seen_count FROM error_signatures WHERE signature = ?",
@@ -65,7 +65,7 @@ class TestErrorRecurrence(HookTestCase):
         self.assertEqual(row["seen_count"], 3)  # 1 manual + 2 checks
 
     def test_no_project_bridge_is_silent(self):
-        out = post_tool_use._check_error_recurrence("sig-x", self.state_dir)
+        out = retrieval._check_error_recurrence("sig-x", self.state_dir)
         self.assertIsNone(out)
 
 

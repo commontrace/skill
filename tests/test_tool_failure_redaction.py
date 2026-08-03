@@ -4,7 +4,7 @@ errors.jsonl, which feeds the contribution payload.
 Root cause: post_tool_failure.py wrote error[:500] and str(tool_input)[:200]
 RAW (it never imported redact), and stop.py reads errors.jsonl into the
 journey/context that is transmitted. Fix = redact at the write site (before
-truncating) plus a belt-and-braces choke point in stop._build_journey_context.
+truncating) plus a belt-and-braces choke point in candidate._build_journey_context.
 """
 
 import io
@@ -20,6 +20,7 @@ sys.path.insert(0, str(HOOKS_DIR))
 
 import post_tool_failure  # noqa: E402
 import session_state  # noqa: E402
+import candidate  # noqa: E402
 import stop  # noqa: E402
 from session_state import append_event, read_events  # noqa: E402
 
@@ -84,7 +85,7 @@ class JourneyContextChokePointTests(unittest.TestCase):
             "output_tail": ("token: sk_live_RAWLEAK1234567890 leaked\n"
                             "Shell cwd was reset to /home/USER/x"),
         })
-        journey = stop._build_journey_context(self.sd)
+        journey = candidate._build_journey_context(self.sd)
         msgs = journey.get("error_messages", [])
         self.assertTrue(msgs)
         joined = " ".join(msgs)
@@ -97,7 +98,7 @@ class JourneyContextChokePointTests(unittest.TestCase):
             "source": "tool_failure",
             "error": "password: hunter2secretlongvalue in the config",
         })
-        journey = stop._build_journey_context(self.sd)
+        journey = candidate._build_journey_context(self.sd)
         joined = " ".join(journey.get("error_messages", []))
         self.assertNotIn("hunter2secretlongvalue", joined)
         self.assertIn("[REDACTED]", joined)

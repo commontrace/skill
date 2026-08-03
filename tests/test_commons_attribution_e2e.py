@@ -24,7 +24,11 @@ from tests.base import HookTestCase, append_event, read_events
 
 import local_store  # noqa: E402
 import post_tool_use  # noqa: E402
+import ct_config  # noqa: E402
+import resolution  # noqa: E402
+import retrieval  # noqa: E402
 import session_state  # noqa: E402
+import session_report  # noqa: E402
 import stop  # noqa: E402
 
 
@@ -89,12 +93,12 @@ class CommonsAttributionTestCase(HookTestCase):
         self.addCleanup(patcher.stop)
 
         key_patcher = mock.patch.object(
-            post_tool_use, "load_api_key", return_value="test-key")
+            ct_config, "load_api_key", return_value="test-key")
         key_patcher.start()
         self.addCleanup(key_patcher.stop)
 
         search_patcher = mock.patch.object(
-            post_tool_use, "search_commontrace",
+            retrieval, "search_commontrace",
             return_value=list(COMMONS_RESULTS))
         self.search = search_patcher.start()
         self.addCleanup(search_patcher.stop)
@@ -171,7 +175,7 @@ class TestCommonsAttributionEndToEnd(CommonsAttributionTestCase):
         self.assertIn("Citation, not co-authorship", ctx)
 
         # ── 4. What stop.py reports: commons consumption is non-zero ──
-        counters = stop._session_counters(conn, d, pid)
+        counters = session_report._session_counters(conn, d, pid)
         self.assertGreater(counters["traces_consumed"], 0)
         self.assertGreater(counters["resolutions_assisted"], 0)
 
@@ -290,7 +294,7 @@ class TestCommonsOutranksLocalMarker(HookTestCase):
         local_store.record_trigger(conn, sid, "bash_error")
         local_store.record_trigger(conn, sid, "error_recurrence")
 
-        out = post_tool_use._pair_resolution(
+        out = resolution._pair_resolution(
             self.state_dir, "pytest tests/",
             read_events(self.state_dir, "errors.jsonl"))
 

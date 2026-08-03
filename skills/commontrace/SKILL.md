@@ -116,10 +116,9 @@ higher in search results for everyone:
 }
 ```
 
-Valid patterns: `error_resolution`, `security_hardening`, `user_correction`,
-`approach_reversal`, `test_fix_cycle`, `dependency_resolution`, `config_discovery`,
-`infra_discovery`, `migration_pattern`, `research_then_implement`, `cross_file_breadth`,
-`workaround`, `generation_effect`.
+Valid patterns — five, each of them both detected and scored:
+`error_resolution`, `user_correction`, `approach_reversal`, `test_fix_cycle`,
+`research_then_implement`.
 
 ## How the Hooks Work
 
@@ -189,7 +188,7 @@ to a model. Same inputs always give the same result. It fires **only** when
 2. your message matches a move-on phrase (`move_on_patterns`, default
    `next task` / `move on to the next` / `on to the next task`);
 3. a contribution-worthy fix candidate exists **this session** (e.g.
-   `error_resolution`, `test_fix_cycle`, `config_discovery` — recorded by
+   `test_fix_cycle`, `approach_reversal`, `user_correction` — recorded by
    `post_tool_use.py`); and
 4. nothing has been auto-contributed yet this session (one-shot).
 

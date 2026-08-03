@@ -38,14 +38,23 @@ TRACE_URL = "https://commontrace.org/t/{}"
 _TEMP_BOUNDS = [(7, "hot"), (30, "warm"), (90, "cool"), (180, "cold")]
 TEMP_COLORS = {"hot": "#e25822", "warm": "#e8a33d", "cool": "#4f86c6",
                "cold": "#7a8b99", "frozen": "#b9c4cc"}
-KNOWN_PATTERNS = frozenset({
-    "error_resolution", "security_hardening", "user_correction",
-    "approach_reversal", "test_fix_cycle", "dependency_resolution",
-    "config_discovery", "novelty_encounter", "infra_discovery",
-    "migration_pattern", "research_then_implement", "generation_effect",
-    "cross_file_breadth", "iteration_depth", "workaround",
-    "temporal_investment", "fail_then_succeed",
+# The five patterns the skill detects and scores today.
+ACTIVE_PATTERNS = frozenset({
+    "error_resolution", "user_correction", "approach_reversal",
+    "test_fix_cycle", "research_then_implement",
 })
+# Patterns retired in v1.5. Kept ONLY as a rendering allow-list: sessions
+# recorded before the prune still carry these names in local.db, and the
+# recap must label them rather than flatten them to "unknown".
+RETIRED_PATTERNS = frozenset({
+    "security_hardening", "dependency_resolution", "config_discovery",
+    "novelty_encounter", "infra_discovery", "migration_pattern",
+    "generation_effect", "cross_file_breadth", "iteration_depth",
+    "workaround", "temporal_investment", "fail_then_succeed",
+    "user_emphasis",
+})
+# Whitelist for rendering DB text — never widen with unvetted values.
+KNOWN_PATTERNS = ACTIVE_PATTERNS | RETIRED_PATTERNS
 
 
 def temperature(last_seen_at, now=None):
