@@ -6,24 +6,16 @@ Reads accumulated state from Layer 1 hooks (JSONL files) and knowledge
 candidates detected in real-time by post_tool_use.py, then computes a
 weighted importance score to decide whether to prompt for contribution.
 
-Importance scoring (structural, no NLU):
-  error_resolution:       3.0  — error→fix→verify cycle
-  security_hardening:     2.5  — security file changes after errors
-  user_correction:        2.5  — user redirected approach (file changed before/after turn)
-  approach_reversal:      2.5  — rewrote after iteration (paradigm shift)
+Importance scoring (structural, no NLU) — five patterns, no more:
+  error_resolution:        3.0  — error→fix→verify cycle
+  user_correction:         2.5  — user redirected approach (file changed
+                                  before/after a user turn)
+  approach_reversal:       2.5  — rewrote after iteration (paradigm shift)
+  test_fix_cycle:          2.0  — test fails → fix code → test passes
   research_then_implement: 2.0  — searched then coded (no errors)
-  test_fix_cycle:         2.0  — test fails → fix code → test passes
-  dependency_resolution:  2.0  — package manager errors → config fix → success
-  config_discovery:       2.0  — config changes that fixed errors
-  novelty_encounter:      2.0  — new language/domain in project
-  infra_discovery:        2.0  — infrastructure file changes after errors
-  migration_pattern:      2.0  — 5+ files across dirs + config changes
-  iteration_depth:        1.5  — same file edited many times (scales to 2.0)
-  cross_file_breadth:     1.5  — changes spanning 3+ directories
-  generation_effect:      1.5  — solved without external knowledge
-  workaround:             1.5  — research + errors + changes
-  fail_then_succeed:      1.5  — error → change → bash success (not if error_resolution)
-  temporal_investment:    1.0  — long session with sustained activity
+
+Every pattern here is BOTH detected and scored: a pattern that fires
+without contributing to the total is a lie about what the system measures.
 
 Temporal proximity compounding: patterns near high-signal events get a
 0-30% boost (synaptic tagging). Threshold >= 4.0 triggers contribution.
@@ -33,11 +25,9 @@ anonymized trigger stats reporting.
 """
 
 import json
-import math
 import os
 import sys
 import time
-from collections import Counter
 from pathlib import Path
 
 # Defensive (Issue 9): hook payloads arrive as UTF-8 JSON on stdin, but some
@@ -147,8 +137,7 @@ def _contribution_directive(candidate: dict, auto_mode: bool,
 
         ev = candidate.get("evidence") or {}
         where = ""
-        for key in ("config_files", "files", "fix_files",
-                    "security_files", "infra_files"):
+        for key in ("fix_files", "file"):
             val = ev.get(key)
             if isinstance(val, list) and val:
                 where = Path(val[0]).name
@@ -218,8 +207,7 @@ def _build_title(top_pattern: str, evidence: dict, ctx_fp: dict | None) -> str:
     framework = (ctx_fp or {}).get("framework", "") if ctx_fp else ""
 
     file_basename = ""
-    for key in ("file", "files", "fix_files", "config_files",
-                "security_files", "infra_files"):
+    for key in ("file", "fix_files"):
         val = evidence.get(key)
         if isinstance(val, str) and val:
             file_basename = Path(val).name
@@ -276,19 +264,11 @@ MIN_FIRED = 3
 # should reinforce it. Patterns absent from this map are never adjusted.
 PATTERN_TO_TRIGGERS = {
     "error_resolution": ("error_recurrence", "bash_error"),
-    "workaround": ("error_recurrence", "bash_error"),
-    "dependency_resolution": ("error_recurrence", "bash_error"),
-    "novelty_encounter": ("domain_entry",),
 }
 
 
 def _clamp(lo, hi, val):
     return max(lo, min(hi, val))
-
-
-def _is_protected(pattern):
-    """High-signal patterns may be boosted but never demoted below 1.0x."""
-    return pattern == "error_resolution" or pattern.startswith("security")
 
 
 def _pattern_effectiveness(pattern, effectiveness):
@@ -312,11 +292,13 @@ def _pattern_effectiveness(pattern, effectiveness):
 
 
 def _apply_reinforcement(scores, effectiveness):
-    """Scale pattern scores in place by their trigger consumption rate.
+    """Scale mapped pattern scores in place by their trigger consumption rate.
 
-    multiplier = clamp(lo, 1.3, 0.85 + 0.5 * rate). Protected patterns floor
-    at 1.0 (boost-only); others floor at 0.7. No-op on empty effectiveness or
-    when a pattern's triggers fired fewer than MIN_FIRED times.
+    multiplier = clamp(1.0, 1.3, 0.85 + 0.5 * rate) — boost-only. Every
+    pattern in PATTERN_TO_TRIGGERS is a high-signal one, so a cold or unlucky
+    trigger record may lift a score but must never push it below its base
+    weight. No-op on empty effectiveness or when a pattern's triggers fired
+    fewer than MIN_FIRED times.
     """
     if not effectiveness:
         return
@@ -326,8 +308,7 @@ def _apply_reinforcement(scores, effectiveness):
         e = _pattern_effectiveness(pattern, effectiveness)
         if not e or e["fired"] < MIN_FIRED:
             continue
-        lo = 1.0 if _is_protected(pattern) else 0.7
-        scores[pattern] *= _clamp(lo, 1.3, 0.85 + 0.5 * e["rate"])
+        scores[pattern] *= _clamp(1.0, 1.3, 0.85 + 0.5 * e["rate"])
 
 
 def compute_importance(state_dir: Path, effectiveness: dict | None = None) -> tuple[float, str, dict]:
@@ -338,9 +319,7 @@ def compute_importance(state_dir: Path, effectiveness: dict | None = None) -> tu
     errors = read_events(state_dir, "errors.jsonl")
     resolutions = read_events(state_dir, "resolutions.jsonl")
     changes = read_events(state_dir, "changes.jsonl")
-    research = read_events(state_dir, "research.jsonl")
     candidates = read_events(state_dir, "candidates.jsonl")
-    user_turns = read_counter(state_dir, "user_turn_count")
 
     scores: dict[str, float] = {}
     evidence: dict[str, dict] = {}
@@ -383,95 +362,6 @@ def compute_importance(state_dir: Path, effectiveness: dict | None = None) -> tu
             "previous_edits": rc.get("previous_edits", 0),
         }
 
-    # ── Cross-file Breadth (1.5) — NEW: multi-directory work ──
-    breadth_candidates = [
-        c for c in candidates if c.get("pattern") == "cross_file_breadth"
-    ]
-    if breadth_candidates:
-        bc = breadth_candidates[-1]
-        scores["cross_file_breadth"] = 1.5
-        evidence["cross_file_breadth"] = {
-            "directories": bc.get("directories", [])[:5],
-            "file_count": bc.get("file_count", 0),
-        }
-
-    # ── Config Discovery (2.0) ──
-    config_changes = [c for c in changes if c.get("is_config")]
-    if config_changes and errors:
-        first_error_t = min(e.get("t", 0) for e in errors)
-        config_after = [
-            c for c in config_changes if c.get("t", 0) > first_error_t
-        ]
-        if config_after:
-            scores["config_discovery"] = 2.0
-            evidence["config_discovery"] = {
-                "config_files": [c.get("file") for c in config_after[:3]],
-            }
-
-    # ── Iteration Depth (1.5) ──
-    file_counts = Counter(c.get("file", "") for c in changes)
-    iterated = {f: n for f, n in file_counts.items() if n >= 3}
-    if iterated:
-        max_edits = max(iterated.values())
-        # Scale: 3 edits = 1.5, 6+ edits = 2.0
-        scores["iteration_depth"] = min(1.5 * (max_edits / 3), 2.0)
-        evidence["iteration_depth"] = {
-            "files": list(iterated.keys())[:3],
-            "max_edits": max_edits,
-        }
-
-    # ── Temporal Investment (1.0) ──
-    all_events = errors + resolutions + changes + research
-    if all_events and len(all_events) >= 5:
-        timestamps = [e.get("t", 0) for e in all_events if e.get("t")]
-        if timestamps:
-            duration_min = (max(timestamps) - min(timestamps)) / 60
-            if duration_min >= 5:
-                # Scale: 5min = 0.5, 30min+ = 1.0
-                scores["temporal_investment"] = min(
-                    0.5 + 0.5 * math.log(duration_min / 5, 6), 1.0)
-                evidence["temporal_investment"] = {
-                    "duration_minutes": round(duration_min, 1),
-                    "event_count": len(all_events),
-                }
-
-    # ── Novelty Encounter (2.0) ──
-    # Detected via domain_entry trigger firing (bridge file)
-    try:
-        domain_entry_path = state_dir / "domain_entry_fired"
-        if domain_entry_path.exists():
-            scores["novelty_encounter"] = 2.0
-            evidence["novelty_encounter"] = {
-                "new_domain": domain_entry_path.read_text(
-                    encoding="utf-8").strip()
-            }
-    except OSError:
-        pass
-
-    # ── Workaround: research + errors + changes (1.5) ──
-    if research and errors and changes and "error_resolution" not in scores:
-        scores["workaround"] = 1.5
-        evidence["workaround"] = {
-            "research_count": len(research),
-            "error_count": len(errors),
-        }
-
-    # ── Fail→Succeed (1.5) — error → change → bash success ──
-    # Detected in post_tool_use.py; scored here at the workaround tier.
-    # Suppressed when error_resolution already fired so the same
-    # error → fix → success story isn't double-counted. Landing in `scores`
-    # lets temporal-proximity compounding boost it near high-signal events.
-    fts_candidates = [
-        c for c in candidates if c.get("pattern") == "fail_then_succeed"
-    ]
-    if fts_candidates and "error_resolution" not in scores:
-        scores["fail_then_succeed"] = 1.5
-        fc = fts_candidates[-1]
-        evidence["fail_then_succeed"] = {
-            "error_count": fc.get("error_count", 0),
-            "fix_files": fc.get("fix_files", [])[:5],
-        }
-
     # ── User Correction (2.5) — user redirected the approach ──
     correction_candidates = [
         c for c in candidates if c.get("pattern") == "user_correction"
@@ -496,104 +386,9 @@ def compute_importance(state_dir: Path, effectiveness: dict | None = None) -> tu
             "fix_files": tc.get("fix_files", [])[:3],
         }
 
-    # ── Dependency Resolution (2.0) — version/package conflicts resolved ──
-    dep_candidates = [
-        c for c in candidates if c.get("pattern") == "dependency_resolution"
-    ]
-    if dep_candidates:
-        scores["dependency_resolution"] = 2.0
-        dc = dep_candidates[-1]
-        evidence["dependency_resolution"] = {
-            "error_count": dc.get("error_count", 0),
-            "config_files": dc.get("config_files", [])[:3],
-        }
-
-    # ── Security Hardening (2.5) — security fix after errors ──
-    sec_candidates = [
-        c for c in candidates if c.get("pattern") == "security_hardening"
-    ]
-    if sec_candidates:
-        scores["security_hardening"] = 2.5
-        sc = sec_candidates[-1]
-        evidence["security_hardening"] = {
-            "security_files": sc.get("security_files", [])[:3],
-            "error_count": sc.get("error_count", 0),
-        }
-
-    # ── Infra Discovery (2.0) — deployment/infrastructure fixes ──
-    infra_candidates = [
-        c for c in candidates if c.get("pattern") == "infra_discovery"
-    ]
-    if infra_candidates:
-        scores["infra_discovery"] = 2.0
-        ic = infra_candidates[-1]
-        evidence["infra_discovery"] = {
-            "infra_files": ic.get("infra_files", [])[:3],
-            "error_count": ic.get("error_count", 0),
-        }
-
-    # ── Migration Pattern (2.0) — library/version migration ──
-    mig_candidates = [
-        c for c in candidates if c.get("pattern") == "migration_pattern"
-    ]
-    if mig_candidates:
-        scores["migration_pattern"] = 2.0
-        mc = mig_candidates[-1]
-        evidence["migration_pattern"] = {
-            "total_files": mc.get("total_files", 0),
-            "config_files": mc.get("config_files", [])[:3],
-        }
-
-    # ── Generation Effect (1.5) — solved without external help ──
-    consumed_traces = 0
-    try:
-        from local_store import _get_conn
-        conn = _get_conn()
-        row = conn.execute(
-            "SELECT COUNT(*) FROM trigger_feedback "
-            "WHERE session_id = ? AND trace_consumed_id IS NOT NULL",
-            (state_dir.name,),
-        ).fetchone()
-        consumed_traces = row[0] if row else 0
-        conn.close()
-    except Exception as e:
-        log_hook_error("generation_effect_query", e)
-
-    if errors and resolutions and not research and consumed_traces == 0:
-        scores["generation_effect"] = 1.5
-        evidence["generation_effect"] = {
-            "errors": len(errors), "external_help": False,
-        }
-    elif errors and resolutions and research and consumed_traces == 0:
-        scores["generation_effect"] = 1.0
-        evidence["generation_effect"] = {
-            "errors": len(errors), "researched_but_no_trace": True,
-        }
-
-    # ── User Emphasis (1.5) — user structurally stressed importance ──
-    emphasis_events = read_events(state_dir, "emphasis.jsonl")
-    if emphasis_events:
-        # Aggregate: take the peak emphasis score across all turns
-        peak_emphasis = max(e.get("emphasis_score", 0) for e in emphasis_events)
-        all_keywords = []
-        for e in emphasis_events:
-            all_keywords.extend(e.get("keywords", []))
-        unique_keywords = list(dict.fromkeys(all_keywords))  # dedupe, preserve order
-
-        if peak_emphasis >= 0.2:
-            # Scale: 0.2 emphasis = 1.0 weight, 1.0 emphasis = 1.5 weight
-            scores["user_emphasis"] = 1.0 + 0.5 * min(1.0, peak_emphasis)
-            evidence["user_emphasis"] = {
-                "peak_emphasis": peak_emphasis,
-                "emphasis_turns": len(emphasis_events),
-                "keywords": unique_keywords[:5],
-            }
-
     # ── Temporal Proximity Compounding ──
     # Patterns near high-signal events get a boost (synaptic tagging)
-    HIGH_SIGNAL = {
-        "error_resolution", "approach_reversal", "security_hardening",
-    }
+    HIGH_SIGNAL = {"error_resolution", "approach_reversal"}
     if candidates and len(candidates) >= 2:
         high_events = [
             c for c in candidates if c.get("pattern") in HIGH_SIGNAL
@@ -720,28 +515,6 @@ def _build_candidate(score: float, top_pattern: str, evidence: dict,
             f"a sign that the initial approach was wrong. "
             f"What you learned about WHY is valuable knowledge."
         ),
-        "cross_file_breadth": (
-            f"You made changes across {evidence.get('file_count', 0)} files "
-            f"in {len(evidence.get('directories', []))} directories. "
-            f"Integration knowledge (how systems connect) is consistently "
-            f"the hardest to discover and most valuable to share."
-        ),
-        "config_discovery": (
-            f"You modified configuration file(s) "
-            f"({', '.join(Path(f).name for f in evidence.get('config_files', [])[:3])}) "
-            f"to fix errors. Configuration discoveries are hard-won knowledge."
-        ),
-        "iteration_depth": (
-            f"You iterated on "
-            f"{', '.join(Path(f).name for f in evidence.get('files', [])[:3])} "
-            f"({evidence.get('max_edits', 0)}+ edits). Solutions found "
-            f"through iteration represent genuine effort."
-        ),
-        "workaround": (
-            f"You researched a problem ({evidence.get('research_count', 0)} "
-            f"searches) and worked around {evidence.get('error_count', 0)} "
-            f"error(s). Workarounds are especially valuable."
-        ),
         "user_correction": (
             f"You changed approach on {Path(evidence.get('file', '')).name} "
             f"after user feedback — the gap between your initial approach and "
@@ -751,32 +524,6 @@ def _build_candidate(score: float, top_pattern: str, evidence: dict,
             f"Tests failed, you fixed the code "
             f"({', '.join(Path(f).name for f in evidence.get('fix_files', [])[:3])}), "
             f"and tests passed. The fix pattern is valuable knowledge."
-        ),
-        "dependency_resolution": (
-            f"You resolved dependency/version conflicts involving "
-            f"{', '.join(Path(f).name for f in evidence.get('config_files', [])[:3])}. "
-            f"Package compatibility knowledge is extremely reusable."
-        ),
-        "security_hardening": (
-            f"You fixed a security-related issue in "
-            f"{', '.join(Path(f).name for f in evidence.get('security_files', [])[:3])}. "
-            f"Security knowledge is critical to share — dangerous to miss."
-        ),
-        "infra_discovery": (
-            f"You figured out infrastructure configuration "
-            f"({', '.join(Path(f).name for f in evidence.get('infra_files', [])[:3])}). "
-            f"Deployment knowledge is notoriously underdocumented."
-        ),
-        "migration_pattern": (
-            f"You modified {evidence.get('total_files', 0)} files across "
-            f"multiple directories — this looks like a migration. "
-            f"Migration paths are poorly documented and highly reusable."
-        ),
-        "user_emphasis": (
-            f"The user emphasized this work "
-            f"({', '.join(evidence.get('keywords', [])[:3]) or 'strongly'}). "
-            f"When users stress importance, the knowledge matters more — "
-            f"like emotional memory in humans."
         ),
     }
 
@@ -821,12 +568,6 @@ def _build_candidate(score: float, top_pattern: str, evidence: dict,
         # Conservative legacy floor when the window has no measurable usage.
         tokens_to_resolution = (len(errors) + max_iterations) * TOKENS_PER_TURN_EST
 
-    # Include user emphasis score if detected
-    emphasis_events = read_events(state_dir, "emphasis.jsonl")
-    peak_emphasis = 0.0
-    if emphasis_events:
-        peak_emphasis = max(e.get("emphasis_score", 0) for e in emphasis_events)
-
     # Build journey context for pre-filled template
     journey_ctx = _build_journey_context(state_dir)
     ctx_fp = _read_context_fingerprint(state_dir)
@@ -844,7 +585,6 @@ def _build_candidate(score: float, top_pattern: str, evidence: dict,
         f'"error_count": {len(errors)}',
         f'"time_to_resolution_minutes": {duration_min}',
         f'"iteration_count": {max_iterations}',
-        f'"user_emphasis": {peak_emphasis}',
         f'"tokens_to_resolution": {tokens_to_resolution}',
     ]
     if first_error_tail:
@@ -906,7 +646,6 @@ def _build_candidate(score: float, top_pattern: str, evidence: dict,
         "error_count": len(errors),
         "time_to_resolution_minutes": duration_min,
         "iteration_count": max_iterations,
-        "user_emphasis": peak_emphasis,
         "tokens_to_resolution": tokens_to_resolution,
     }
     if first_error_tail:
