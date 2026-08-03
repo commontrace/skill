@@ -30,11 +30,17 @@ except Exception:
     pass
 
 sys.path.insert(0, str(Path(__file__).parent))
-import ct_config
-from candidate import _build_candidate, _contribution_directive
-from scoring import IMPORTANCE_THRESHOLD, compute_importance
-from session_report import _book_savings, _persist_session, _report_trigger_stats
-from session_state import get_state_dir, read_events, read_counter, log_hook_error
+
+# Import guard — see post_tool_use.py. A partial update must degrade to a
+# silent no-op, not a traceback at the end of every session.
+try:
+    import ct_config
+    from candidate import _build_candidate, _contribution_directive
+    from scoring import IMPORTANCE_THRESHOLD, compute_importance
+    from session_report import _book_savings, _persist_session, _report_trigger_stats
+    from session_state import get_state_dir, read_events, read_counter, log_hook_error
+except ImportError:
+    sys.exit(0)
 
 
 RESOLUTION_DIR = Path.home() / ".commontrace" / "resolutions"

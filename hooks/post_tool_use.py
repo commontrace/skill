@@ -30,18 +30,27 @@ except Exception:
     pass
 
 sys.path.insert(0, str(Path(__file__).parent))
-from bash_result import detect_bash_error
-from detection import _detect_knowledge_candidates
-from redact import redact_text, redact_command, is_sensitive_file
-from resolution import _pair_resolution, record_surfaced
-from retrieval import (
-    _check_domain_entry, _check_error_recurrence, _check_pre_code,
-    format_error_hits, search_on_bash_error,
-)
-from session_state import (
-    append_event, error_signature, get_state_dir, is_config_file, log_hook_error,
-    read_events, read_project_id,
-)
+
+# Import guard. These siblings load at module level, so a partial update (some
+# files new, some old) raises ModuleNotFoundError BEFORE main()'s try/except
+# can catch it — one traceback per tool call, across seven matchers, for the
+# whole session. Degrade to a silent no-op instead: this hook is an
+# enhancement, never a precondition for the user's work.
+try:
+    from bash_result import detect_bash_error
+    from detection import _detect_knowledge_candidates
+    from redact import redact_text, redact_command, is_sensitive_file
+    from resolution import _pair_resolution, record_surfaced
+    from retrieval import (
+        _check_domain_entry, _check_error_recurrence, _check_pre_code,
+        format_error_hits, search_on_bash_error,
+    )
+    from session_state import (
+        append_event, error_signature, get_state_dir, is_config_file, log_hook_error,
+        read_events, read_project_id,
+    )
+except ImportError:
+    sys.exit(0)
 
 
 # ── Tool handlers ────────────────────────────────────────────────────────

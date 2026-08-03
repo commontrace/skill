@@ -30,8 +30,13 @@ except Exception:
     pass
 
 sys.path.insert(0, str(Path(__file__).parent))
-from session_state import get_state_dir, increment_counter, append_event, read_events
-from auto_contribute import should_fire_contribution, MOVE_ON_PATTERNS
+
+# Import guard — see post_tool_use.py.
+try:
+    from session_state import get_state_dir, increment_counter, append_event, read_events
+    from auto_contribute import should_fire_contribution, MOVE_ON_PATTERNS
+except ImportError:
+    sys.exit(0)
 
 
 # ── Auto-contribute on transition (gated, config-off by default) ──────────
