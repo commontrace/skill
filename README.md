@@ -29,6 +29,25 @@ That's it. Your next Claude Code session sets everything up automatically:
 
 No account, no email, no environment variables, no decisions.
 
+## Update
+
+```
+claude plugin update commontrace
+```
+
+Updates are **not** automatic — you stay on your installed version until you run
+that. To see what you have: `claude plugin list`.
+
+Once a day, at session start, the skill checks whether a newer version has been
+published and prints one line if so. It rides the existing daily heartbeat, so it
+costs one request per day, never one per session, and it fails silently when
+offline. Turn it off with `"update_check": false` in `~/.commontrace/config.json`.
+
+Update as a whole, never file by file: the hooks import sibling modules, so a
+half-updated install would be missing pieces. Since 0.6.0 that case degrades to a
+silent no-op rather than erroring on every tool call, but it still leaves you
+without the features.
+
 ## What leaves your machine, and when
 
 - **At session start:** a search using only your project's **language/framework tag** (e.g. `python`) — **no code, no file contents, no prompts** — to fetch relevant fixes.

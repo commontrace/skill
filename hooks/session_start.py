@@ -46,6 +46,7 @@ CONFIG_DIR = Path.home() / ".commontrace"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 PENDING_DIR = CONFIG_DIR / "pending"
 PING_MARKER = CONFIG_DIR / "last_ping_date"
+UPDATE_MARKER = CONFIG_DIR / "last_update_check"
 API_BASE = "https://api.commontrace.org"
 MCP_URL = "https://mcp.commontrace.org/mcp"
 SKILL_VERSION = "0.6.0"
@@ -244,6 +245,61 @@ def maybe_ping(api_key: str) -> None:
             PING_MARKER.write_text(today, encoding="utf-8")
         except OSError:
             pass
+
+
+def _parse_version(text: str) -> tuple:
+    """'0.6.0' -> (0, 6, 0). Returns () when the string isn't a version."""
+    parts = text.strip().split(".")
+    try:
+        return tuple(int(p) for p in parts)
+    except ValueError:
+        return ()
+
+
+def maybe_check_update(config: dict) -> str:
+    """Once per UTC day, tell the user a newer skill version exists.
+
+    Rides the same daily cadence as the heartbeat, so this adds one request
+    per day, never one per session. Fails silently and returns "" on any
+    problem: a version check must never delay or break a session.
+
+    Opt out with `"update_check": false` in ~/.commontrace/config.json.
+    """
+    if config.get("update_check") is False:
+        return ""
+
+    import datetime as _dt
+    today = _dt.datetime.now(_dt.timezone.utc).date().isoformat()
+    try:
+        if UPDATE_MARKER.exists() and UPDATE_MARKER.read_text(encoding="utf-8").strip() == today:
+            return ""
+    except OSError:
+        pass
+
+    latest = ""
+    try:
+        req = urllib.request.Request(
+            "https://raw.githubusercontent.com/commontrace/skill/main"
+            "/.claude-plugin/plugin.json",
+            headers={"User-Agent": f"commontrace-skill/{SKILL_VERSION}"},
+        )
+        with urllib.request.urlopen(req, timeout=2) as resp:
+            latest = str(json.loads(resp.read().decode("utf-8")).get("version", ""))
+    except Exception:
+        return ""
+
+    # Mark the day even when up to date, so a current install checks once daily.
+    try:
+        UPDATE_MARKER.parent.mkdir(parents=True, exist_ok=True)
+        UPDATE_MARKER.write_text(today, encoding="utf-8")
+    except OSError:
+        pass
+
+    current_v, latest_v = _parse_version(SKILL_VERSION), _parse_version(latest)
+    if not current_v or not latest_v or latest_v <= current_v:
+        return ""
+    return (f"CommonTrace {latest} is available (you have {SKILL_VERSION}). "
+            f"Update with: claude plugin update commontrace")
 
 
 def configure_mcp(api_key: str) -> bool:
@@ -700,6 +756,13 @@ def main() -> None:
     except Exception:
         pass
 
+    # Step 1c: Daily update check — same cadence, appended to the session note.
+    update_note = ""
+    try:
+        update_note = maybe_check_update(config)
+    except Exception:
+        pass
+
     # Step 2: Detect coding context
     cwd = data.get("cwd", os.getcwd())
     if not cwd:
@@ -853,6 +916,9 @@ def main() -> None:
     # Append the savings recap line last (quiet, single line, opt-outable).
     if savings_recap:
         additional_context += "\n\n" + savings_recap
+
+    if update_note:
+        additional_context += "\n\n" + update_note
 
     output = {
         "hookSpecificOutput": {
