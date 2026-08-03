@@ -39,12 +39,17 @@ _TEMP_BOUNDS = [(7, "hot"), (30, "warm"), (90, "cool"), (180, "cold")]
 TEMP_COLORS = {"hot": "#e25822", "warm": "#e8a33d", "cool": "#4f86c6",
                "cold": "#7a8b99", "frozen": "#b9c4cc"}
 KNOWN_PATTERNS = frozenset({
-    "error_resolution", "security_hardening", "user_correction",
+    "error_resolution", "security_hardening", "post_turn_revision",
     "approach_reversal", "test_fix_cycle", "dependency_resolution",
     "config_discovery", "novelty_encounter", "infra_discovery",
     "migration_pattern", "research_then_implement", "generation_effect",
     "cross_file_breadth", "iteration_depth", "workaround",
     "temporal_investment", "fail_then_succeed",
+    # Legacy alias: traces contributed before the user_correction ->
+    # post_turn_revision rename still carry the old pattern name in their
+    # stored metadata_json.detection_pattern. Keep accepting it so those
+    # traces still validate and render (not "unknown").
+    "user_correction",
 })
 
 

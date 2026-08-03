@@ -142,8 +142,8 @@ class Issue8ResolutionRecorded(HookTestCase):
         self.assertTrue(resolutions, "a passing test after an error must record a resolution")
 
 
-class UserCorrectionDocsExclusion(HookTestCase):
-    """Docs-only (*.md) edits across a user turn are not user_correction."""
+class PostTurnRevisionDocsExclusion(HookTestCase):
+    """Docs-only (*.md) edits across a user turn are not post_turn_revision."""
 
     def _edit(self, file_path, t):
         return {
@@ -153,7 +153,7 @@ class UserCorrectionDocsExclusion(HookTestCase):
             "_t": t,
         }
 
-    def test_markdown_edit_does_not_produce_user_correction(self):
+    def test_markdown_edit_does_not_produce_post_turn_revision(self):
         # Pre-turn edit to the same markdown file
         append_event(self.state_dir, "changes.jsonl",
                      {"tool": "Edit", "file": "/repo/README.md", "t": 100})
@@ -167,9 +167,9 @@ class UserCorrectionDocsExclusion(HookTestCase):
             self.state_dir)
         candidates = read_events(self.state_dir, "candidates.jsonl")
         patterns = {c.get("pattern") for c in candidates}
-        self.assertNotIn("user_correction", patterns)
+        self.assertNotIn("post_turn_revision", patterns)
 
-    def test_code_edit_still_produces_user_correction(self):
+    def test_code_edit_still_produces_post_turn_revision(self):
         append_event(self.state_dir, "changes.jsonl",
                      {"tool": "Edit", "file": "/repo/app.py", "t": 100})
         append_event(self.state_dir, "changes.jsonl",
@@ -181,7 +181,7 @@ class UserCorrectionDocsExclusion(HookTestCase):
             self.state_dir)
         candidates = read_events(self.state_dir, "candidates.jsonl")
         patterns = {c.get("pattern") for c in candidates}
-        self.assertIn("user_correction", patterns)
+        self.assertIn("post_turn_revision", patterns)
 
 
 if __name__ == "__main__":

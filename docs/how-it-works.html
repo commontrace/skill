@@ -393,7 +393,7 @@
       <p><strong>fail_then_succeed</strong> &mdash; bash error, then code changes, then bash success. The classic error&rarr;fix&rarr;verify cycle.</p>
       <p><strong>approach_reversal</strong> &mdash; Write to a file previously Edit-ed 3+ times. The agent gave up on incremental fixes and rewrote.</p>
       <p><strong>cross_file_breadth</strong> &mdash; changes spanning 3+ directories. Integration knowledge.</p>
-      <p><strong>user_correction</strong> &mdash; same file edited before AND after a user message. The user redirected the approach.</p>
+      <p><strong>post_turn_revision</strong> &mdash; same file edited before AND after a user message. Structural signal only &mdash; the hook can't read message content, so this doesn't distinguish a correction from a follow-up request or the agent revising on its own.</p>
       <p><strong>test_fix_cycle</strong> &mdash; test command fails, non-test code changes, test command succeeds.</p>
       <p><strong>dependency_resolution</strong> &mdash; package manager error, config file changes, package command succeeds.</p>
       <p><strong>security_hardening</strong> &mdash; security-related file changes combined with errors.</p>
@@ -445,7 +445,7 @@
     </tr>
     <tr>
       <td><code>2.5</code></td>
-      <td>user_correction</td>
+      <td>post_turn_revision</td>
       <td>Same file edited before and after a user message</td>
     </tr>
     <tr>
@@ -745,7 +745,7 @@
     <div class="bubble">
       <p><strong>No.</strong> The hooks never read user messages or Claude's responses. Everything is structural &mdash; exit codes, file paths, timestamps, tool sequences.</p>
       <p>This is a deliberate design decision. Keyword lists ("thanks", "perfect", "still broken") are brittle and culturally biased. A user who says "finally omg" is happy; "im gonna lose it" is frustrated &mdash; no keyword list catches these. And the hook is a Python script with a 5-second timeout. It cannot understand language.</p>
-      <p>What it <em>can</em> read: <strong>structural metadata</strong>. Exit codes don't lie. File paths don't lie. Timestamps don't lie. The <code>user_correction</code> pattern detects that a file was changed before and after a user message &mdash; it doesn't need to know <em>what</em> the user said, only <em>that</em> they said something and the approach changed.</p>
+      <p>What it <em>can</em> read: <strong>structural metadata</strong>. Exit codes don't lie. File paths don't lie. Timestamps don't lie. The <code>post_turn_revision</code> pattern detects that a file was changed before and after a user message &mdash; it doesn't need to know <em>what</em> the user said, only <em>that</em> they said something and the file was touched again.</p>
     </div>
   </div>
 </div>
@@ -798,7 +798,7 @@
   Records tool failures to errors.jsonl
 
 <span class="highlight">UserPromptSubmit</span>           → <span class="green">user_prompt.py</span>  <span class="dim">3s</span>
-  Turn counter + timestamp (for user_correction detection)
+  Turn counter + timestamp (for post_turn_revision detection)
 
 <span class="highlight">Stop</span>                       → <span class="green">stop.py</span>  <span class="dim">5s</span>
   Reads all state, scores 16 patterns, prompts if &ge; 4.0,
