@@ -48,7 +48,7 @@ PENDING_DIR = CONFIG_DIR / "pending"
 PING_MARKER = CONFIG_DIR / "last_ping_date"
 API_BASE = "https://api.commontrace.org"
 MCP_URL = "https://mcp.commontrace.org/mcp"
-SKILL_VERSION = "0.5.4"
+SKILL_VERSION = "0.6.0"
 
 SETUP_FAILED_NOTICE = (
     "CommonTrace setup could not complete (API unreachable). The skill will "

@@ -13,14 +13,20 @@
       "name": "commontrace",
       "source": "./",
       "description": "Auto-searches CommonTrace for relevant fixes at session start; structural (no-LLM) knowledge detection; /trace, /recall, and /tutorial-* commands.",
-      "version": "0.5.4",
+      "version": "0.6.0",
       "author": {
         "name": "CommonTrace"
       },
       "homepage": "https://commontrace.org",
       "repository": "https://github.com/commontrace/skill",
       "license": "MIT",
-      "keywords": ["knowledge", "agents", "search", "learning", "traces"]
+      "keywords": [
+        "knowledge",
+        "agents",
+        "search",
+        "learning",
+        "traces"
+      ]
     }
   ]
 }
