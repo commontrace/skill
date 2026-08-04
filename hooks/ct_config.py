@@ -51,8 +51,30 @@ def write_config(config: dict) -> bool:
         return False
 
 
+def plugin_option_api_key() -> str:
+    """The API key supplied at install time, if any.
+
+    ``claude plugin install commontrace@commontrace --config api_key=...``
+    (and the enable-time prompt) store the value against the ``api_key``
+    entry in this plugin's ``userConfig``. Claude Code exports every option
+    to hook processes as ``CLAUDE_PLUGIN_OPTION_<KEY>``; ``${user_config.*}``
+    substitution is refused in shell-form hook commands, so reading the
+    environment is the supported path, not a workaround.
+    """
+    return os.environ.get("CLAUDE_PLUGIN_OPTION_API_KEY", "").strip()
+
+
 def load_api_key() -> str:
-    """API key from the config file, falling back to the environment."""
+    """API key: install-time option, then the config file, then the environment.
+
+    The install-time option wins because it is explicit user intent, while
+    ``config.json`` usually holds the anonymous key session_start provisioned
+    on its own. Someone who pastes a contributor key at install time expects
+    to contribute, not to keep publishing as the anonymous account.
+    """
+    key = plugin_option_api_key()
+    if key:
+        return key
     key = read_config().get("api_key", "")
     if key:
         return key

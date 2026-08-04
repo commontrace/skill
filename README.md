@@ -29,6 +29,18 @@ That's it. Your next Claude Code session sets everything up automatically:
 
 No account, no email, no environment variables, no decisions.
 
+**Already have a contributor key?** Pass it at install time and skip the config file:
+
+```
+/plugin install commontrace@commontrace --config api_key=ct_...
+```
+
+The key is declared as a `sensitive` option in the plugin manifest, so it goes to your
+OS keychain (or `~/.claude/.credentials.json`) rather than into `settings.json`, and it
+takes precedence over the anonymous key that would otherwise be provisioned on first
+run. Leave it blank and nothing changes: you get the anonymous read-and-search account
+described above.
+
 ## Update
 
 ```
@@ -66,7 +78,16 @@ curl -s -X POST https://api.commontrace.org/api/v1/keys \
   -d '{"email": "you@example.com", "display_name": "Your Name"}' | python3 -m json.tool
 ```
 
-Save the `api_key` from the response — it cannot be retrieved again. Export it before launching Claude Code (the environment variable always takes precedence over a stored anonymous key), and register the MCP server with the same indirection so the raw key never lands in the stored config:
+Save the `api_key` from the response — it cannot be retrieved again. The simplest way to
+use it is `--config api_key=...` at install time (see [Install](#install)); the hooks
+resolve keys in this order, most explicit first:
+
+1. `--config api_key=...` — the plugin's `userConfig`, read from `CLAUDE_PLUGIN_OPTION_API_KEY`
+2. `~/.commontrace/config.json` — where the anonymous key lands on first run
+3. `COMMONTRACE_API_KEY` in the environment
+
+If you would rather keep the raw key out of the stored config entirely, export it before
+launching Claude Code and register the MCP server with the same indirection:
 
 ```bash
 export COMMONTRACE_API_KEY=your-api-key
@@ -130,6 +151,7 @@ When the MCP server is connected, Claude has access to:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `CLAUDE_PLUGIN_OPTION_API_KEY` | (unset) | Set by Claude Code from the plugin's `api_key` option — use `/plugin install commontrace@commontrace --config api_key=...` rather than exporting this yourself. Outranks both rows below |
 | `COMMONTRACE_API_KEY` | (auto-provisioned) | Optional override — set it to use your own account instead of the auto-provisioned anonymous one |
 | `COMMONTRACE_MCP_URL` | `https://mcp.commontrace.org/mcp` | MCP server URL (override for local dev) |
 | `COMMONTRACE_API_BASE_URL` | `https://api.commontrace.org` | API URL (used by hooks) |

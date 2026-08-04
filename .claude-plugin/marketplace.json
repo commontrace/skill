@@ -13,7 +13,7 @@
       "name": "commontrace",
       "source": "./",
       "description": "Auto-searches CommonTrace for relevant fixes at session start; structural (no-LLM) knowledge detection; /trace, /recall, and /tutorial-* commands.",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "author": {
         "name": "CommonTrace"
       },

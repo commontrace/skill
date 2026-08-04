@@ -10,7 +10,9 @@ You are running the **CommonTrace Retrieval tutorial**. It is being screen-recor
 
 ## Preconditions (do these silently — do not narrate)
 - You must be inside the `commontrace/demo` repo (ideally a fresh sibling clone so it clearly reads as a different agent/project). If `app/payments.py` does not exist, print exactly `Run this inside the commontrace/demo repo (see commontrace.org/tutorial).` and stop.
-- The bug should be present (the point is to solve it via recall). If unsure, quietly run `./reset.sh`.
+- Re-arm the bug yourself; the point is to solve it via recall, so it has to be there. Run `./reset.sh --repo-only` (repo files only, so the live session's own skill state survives). If `reset.sh` is absent, fall back to `git checkout -- app tests`.
+- Pick the test runner once: `python3 -c "import pytest" 2>/dev/null && echo pytest || echo unittest`. `pytest` means the test command below is `python3 -m pytest -q`, otherwise `python3 -m unittest -q`. Never use bare `python` — it does not exist on Debian or Ubuntu outside a venv.
+- No key check is needed: this clip only reads from the commons, which an anonymous key can do.
 
 ## The tutorial — film from here
 
@@ -18,12 +20,13 @@ You are running the **CommonTrace Retrieval tutorial**. It is being screen-recor
 
 2. **Spontaneous surfacing (primary path).** CommonTrace already searched the commons the moment this session opened (the `session_start` hook) and surfaces relevant fixes for the project on its own. Show what it surfaced — run this block verbatim:
    ```bash
-   KEY=$(python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.commontrace/config.json')))['api_key'])")
    H="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/hooks}"; [ -d "$H" ] || H="$(dirname "$(readlink -f ~/.claude/commands/tutorial-retrieval.md)")/../hooks"
-   python3 - "$KEY" "$H" <<'PY'
+   python3 - "$H" <<'PY'
    import sys, os
-   key, hooks = sys.argv[1], sys.argv[2]
+   hooks = sys.argv[1]
    sys.path.insert(0, hooks)
+   import ct_config
+   key = ct_config.load_api_key()
    import session_start as ss
    q = ss.detect_context(os.getcwd()) or "python common patterns and solutions"
    res = ss.search_commontrace(q, "python", key, {}) or []
@@ -40,7 +43,8 @@ You are running the **CommonTrace Retrieval tutorial**. It is being screen-recor
 
 3. **Fallback — explicit search (only if step 2 printed NO_SPONTANEOUS_HIT).** Run verbatim; it prints only the match (clean for the recording):
    ```bash
-   KEY=$(python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.commontrace/config.json')))['api_key'])")
+   H="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/hooks}"; [ -d "$H" ] || H="$(dirname "$(readlink -f ~/.claude/commands/tutorial-retrieval.md)")/../hooks"
+   KEY=$(python3 -c "import sys;sys.path.insert(0,sys.argv[1]);import ct_config;print(ct_config.load_api_key())" "$H")
    BASE="${COMMONTRACE_API_BASE_URL:-https://api.commontrace.org}"
    curl -s -X POST "$BASE/api/v1/traces/search" \
      -H "X-API-Key: $KEY" -H "Content-Type: application/json" --data-binary @- <<'JSON' | python3 -c "import sys,json; r=[t for t in json.load(sys.stdin).get('results',[]) if 'double-charge' in t.get('title','').lower()]; print('⬡ CommonTrace match:', r[0]['title']) if r else print('⬡ CommonTrace: no match found')"
@@ -54,7 +58,7 @@ You are running the **CommonTrace Retrieval tutorial**. It is being screen-recor
        if store.seen_event(event["id"]):
            return
    ```
-5. Run `python -m pytest -q` → green. Say: `Fixed in seconds — reused, not re-solved.`
+5. Run the test command → green (no failures). Say: `Fixed in seconds — reused, not re-solved.`
 6. Render the retrieved receipt. Run the block below **verbatim** (it prints the ⬡ receipt to stdout):
    ```bash
    H="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/hooks}"; [ -d "$H" ] || H="$(dirname "$(readlink -f ~/.claude/commands/tutorial-retrieval.md)")/../hooks"

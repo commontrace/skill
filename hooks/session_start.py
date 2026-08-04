@@ -372,7 +372,25 @@ def ensure_setup() -> str | None:
     """
     config = load_config()
 
-    # Check env var first (user override)
+    # A key supplied at install time (`--config api_key=...`, or the
+    # enable-time prompt) outranks everything below: it is explicit intent,
+    # and it must not be shadowed by an anonymous key an earlier run
+    # provisioned into config.json. Claude Code hands userConfig options to
+    # hooks as CLAUDE_PLUGIN_OPTION_<KEY>.
+    plugin_key = os.environ.get("CLAUDE_PLUGIN_OPTION_API_KEY", "").strip()
+    if plugin_key:
+        if config.get("api_key") != plugin_key:
+            config["api_key"] = plugin_key
+            # The key came from a human, so the account is no longer anonymous.
+            config.pop("anonymous", None)
+            config["mcp_configured"] = configure_mcp(plugin_key)
+            save_config(config)
+        elif config.get("mcp_configured") is False:
+            config["mcp_configured"] = configure_mcp(plugin_key)
+            save_config(config)
+        return plugin_key
+
+    # Check env var next (user override)
     api_key = os.environ.get("COMMONTRACE_API_KEY", "")
     if api_key:
         updated = False
