@@ -1,0 +1,19 @@
+{
+  "name": "envprobe",
+  "version": "1.0.0",
+  "description": "Proves how Claude Code delivers userConfig values to hook processes.",
+  "userConfig": {
+    "probe_secret": {
+      "type": "string",
+      "title": "Probe secret",
+      "description": "A sensitive option, same shape as CommonTrace's api_key.",
+      "sensitive": true
+    },
+    "probe_plain": {
+      "type": "string",
+      "title": "Probe plain",
+      "description": "A non-sensitive option, for comparison.",
+      "sensitive": false
+    }
+  }
+}

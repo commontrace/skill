@@ -11,6 +11,7 @@ Every run: detects coding context, queries CommonTrace, injects relevant traces.
 Never blocks session start — failures degrade to a short notice or silence.
 """
 
+import contextlib
 import json
 import os
 import re
@@ -350,6 +351,49 @@ def configure_mcp(api_key: str) -> bool:
         return False
 
 
+@contextlib.contextmanager
+def _provisioning_lock():
+    """Serialise writes to the API key in config.json across processes.
+
+    Blocking, unlike the non-blocking acquire in the provisioning path below:
+    a caller that already knows which key it wants has nothing useful to do
+    while another process decides, and the whole point is that it not race.
+
+    Degrades to a no-op wherever fcntl is unavailable (Windows) or the lock
+    file cannot be opened; the caller's work is still correct, just no longer
+    serialised. Never raises.
+    """
+    lock_fd = None
+    try:
+        import fcntl
+    except ImportError:
+        yield
+        return
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        lock_fd = open(CONFIG_DIR / ".provision_lock", "w")
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+    except OSError:
+        if lock_fd is not None:
+            try:
+                lock_fd.close()
+            except OSError:
+                pass
+            lock_fd = None
+    try:
+        yield
+    finally:
+        if lock_fd is not None:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            except OSError:
+                pass
+            try:
+                lock_fd.close()
+            except OSError:
+                pass
+
+
 def ensure_setup() -> str | None:
     """Ensure API key exists and MCP is configured. Returns api_key or None.
 
@@ -379,15 +423,25 @@ def ensure_setup() -> str | None:
     # hooks as CLAUDE_PLUGIN_OPTION_<KEY>.
     plugin_key = os.environ.get("CLAUDE_PLUGIN_OPTION_API_KEY", "").strip()
     if plugin_key:
-        if config.get("api_key") != plugin_key:
-            config["api_key"] = plugin_key
-            # The key came from a human, so the account is no longer anonymous.
-            config.pop("anonymous", None)
-            config["mcp_configured"] = configure_mcp(plugin_key)
-            save_config(config)
-        elif config.get("mcp_configured") is False:
-            config["mcp_configured"] = configure_mcp(plugin_key)
-            save_config(config)
+        # Under the SAME lock the provisioning path uses, and for the same
+        # reason. Without it, a concurrent session_start that has no plugin
+        # option (a second Claude Code window, or a copy of these hooks wired
+        # straight into settings.json alongside the plugin) reads an empty
+        # config, provisions an anonymous key, and overwrites the explicit one
+        # — with the MCP registration following it. Observed in practice: two
+        # `claude mcp add` calls, the anonymous key winning. Holding the lock
+        # makes that process re-read the config and find this key instead.
+        with _provisioning_lock():
+            config = load_config()
+            if config.get("api_key") != plugin_key:
+                config["api_key"] = plugin_key
+                # The key came from a human; the account is no longer anonymous.
+                config.pop("anonymous", None)
+                config["mcp_configured"] = configure_mcp(plugin_key)
+                save_config(config)
+            elif config.get("mcp_configured") is False:
+                config["mcp_configured"] = configure_mcp(plugin_key)
+                save_config(config)
         return plugin_key
 
     # Check env var next (user override)

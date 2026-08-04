@@ -161,5 +161,74 @@ class TestManifestDeclaresTheOption(unittest.TestCase):
         self.assertNotIn("required", option)
 
 
+class TestConcurrentProvisioningRace(HookTestCase):
+    """The install-time branch must take the provisioning lock, not skip it.
+
+    Found by running the real plugin in a live session on a machine that also
+    had a copy of these hooks wired straight into settings.json: two
+    SessionStart processes fired at once, one carrying
+    CLAUDE_PLUGIN_OPTION_API_KEY and one not. The one without it read an empty
+    config, provisioned an anonymous key, and overwrote the explicit one —
+    visible in the MCP registration as two `claude mcp add` calls, the
+    anonymous key second and winning.
+
+    Asserting on the outcome of two sequential calls proves nothing: by then
+    the key is already on disk and the second call reads it. So this asserts
+    the property that actually fixes the race — that the branch BLOCKS while
+    another process holds the lock.
+    """
+
+    def setUp(self):
+        super().setUp()
+        for attr, value in [
+            ("CONFIG_DIR", self.tmp_path),
+            ("CONFIG_FILE", self.tmp_path / "config.json"),
+            ("PENDING_DIR", self.tmp_path / "pending"),
+        ]:
+            patcher = mock.patch.object(session_start, attr, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    @unittest.skipIf(os.name == "nt", "fcntl locking is POSIX-only")
+    def test_install_time_branch_waits_for_the_provisioning_lock(self):
+        import fcntl
+        import multiprocessing
+
+        held = open(self.tmp_path / ".provision_lock", "w")
+        self.addCleanup(held.close)
+        fcntl.flock(held, fcntl.LOCK_EX)
+
+        ctx = multiprocessing.get_context("fork")
+        q = ctx.Queue()
+        child = ctx.Process(target=_child_ensure_setup, args=(q,))
+        child.start()
+        self.addCleanup(lambda: child.kill() if child.is_alive() else None)
+
+        child.join(2.0)
+        self.assertTrue(
+            child.is_alive(),
+            "ensure_setup() returned while another process held the "
+            "provisioning lock, so the install-time key can still be "
+            "clobbered by a concurrent anonymous provisioning")
+
+        fcntl.flock(held, fcntl.LOCK_UN)
+        child.join(20)
+        self.assertFalse(child.is_alive(), "child never finished after unlock")
+        self.assertEqual(q.get(timeout=5), "ct_contributor")
+
+
+def _child_ensure_setup(q):
+    """Run the install-time branch in a forked child and report the key.
+
+    Forked, so it inherits the parent's patched CONFIG_DIR/CONFIG_FILE and
+    sys.path without re-importing anything.
+    """
+    os.environ["CLAUDE_PLUGIN_OPTION_API_KEY"] = "ct_contributor"
+    with mock.patch.object(session_start, "configure_mcp", return_value=True), \
+         mock.patch.object(session_start, "provision_api_key",
+                           side_effect=_provision_forbidden):
+        q.put(session_start.ensure_setup())
+
+
 if __name__ == "__main__":
     unittest.main()
