@@ -1,17 +1,9 @@
 {
   "name": "commontrace",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "CommonTrace knowledge base integration for Claude Code agents. Auto-searches for relevant traces at session start, provides /trace:search, /trace:contribute and /trace:brain commands.",
   "author": {
     "name": "CommonTrace",
     "email": "support@commontrace.dev"
-  },
-  "userConfig": {
-    "api_key": {
-      "type": "string",
-      "title": "CommonTrace API key",
-      "description": "Optional. Leave blank and an anonymous account is registered for you on first run — it can read, search and publish just fine. Set this only to contribute under an account of your own, so traces are attributed to it: claude plugin install commontrace@commontrace --config api_key=...",
-      "sensitive": true
-    }
   }
 }

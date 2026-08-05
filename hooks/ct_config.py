@@ -51,34 +51,25 @@ def write_config(config: dict) -> bool:
         return False
 
 
-def plugin_option_api_key() -> str:
-    """The API key supplied at install time, if any.
-
-    ``claude plugin install commontrace@commontrace --config api_key=...``
-    (and the enable-time prompt) store the value against the ``api_key``
-    entry in this plugin's ``userConfig``. Claude Code exports every option
-    to hook processes as ``CLAUDE_PLUGIN_OPTION_<KEY>``; ``${user_config.*}``
-    substitution is refused in shell-form hook commands, so reading the
-    environment is the supported path, not a workaround.
-    """
-    return os.environ.get("CLAUDE_PLUGIN_OPTION_API_KEY", "").strip()
-
-
 def load_api_key() -> str:
-    """API key: install-time option, then the config file, then the environment.
+    """API key: the environment override first, then the stored config.
 
-    The install-time option wins because it is explicit user intent, while
-    ``config.json`` usually holds the anonymous key session_start provisioned
-    on its own. Someone who pastes their own key at install time expects their
-    contributions attributed to that account, not to the anonymous one.
+    COMMONTRACE_API_KEY wins because it is the one an operator sets on
+    purpose, while ``config.json`` normally holds the anonymous key
+    session_start provisioned on its own. Reading the file first meant the
+    documented override did nothing once that file existed.
+
+    There was briefly a third source here, a ``userConfig`` option read from
+    CLAUDE_PLUGIN_OPTION_API_KEY. It worked, but declaring the option made
+    Claude Code prompt every installer for a key that almost nobody needs
+    (publishing is open to the anonymous account), which is exactly the
+    decision this plugin exists to avoid asking for. The env var covers the
+    same case without taxing everyone else.
     """
-    key = plugin_option_api_key()
+    key = os.environ.get("COMMONTRACE_API_KEY", "").strip()
     if key:
         return key
-    key = read_config().get("api_key", "")
-    if key:
-        return key
-    return os.environ.get("COMMONTRACE_API_KEY", "")
+    return read_config().get("api_key", "")
 
 
 def api_base_url() -> str:

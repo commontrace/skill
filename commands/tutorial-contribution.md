@@ -93,8 +93,7 @@ Round 1 runs immediately when this command is invoked (invoking it is the "fix t
    hooks, base = sys.argv[1], sys.argv[2]
    sys.path.insert(0, hooks)
    import ct_config
-   # Reads all three sources in order: the install-time --config api_key,
-   # then ~/.commontrace/config.json, then COMMONTRACE_API_KEY.
+   # Reads COMMONTRACE_API_KEY, then ~/.commontrace/config.json.
    key = ct_config.load_api_key()
    body = {
      "title": "Stripe webhook double-charges on retried events",

@@ -39,3 +39,12 @@ which tells you the key you should have used.
 For a normally installed plugin the id is `commontrace@commontrace`, and
 `claude plugin install --config api_key=...` writes it for you, so this only
 bites when supplying `pluginConfigs` by hand.
+
+## Why this lives here when CommonTrace declares no `userConfig`
+
+It did, briefly. The option worked end to end — `--config api_key=...` reached
+the hook process, `sensitive: true` kept the value out of `settings.json` — and
+this probe is what proved it. It was removed anyway, because declaring a
+userConfig option makes Claude Code prompt every installer for it, and the
+plugin's whole pitch is that installing asks you nothing. The probe stays as
+the way to re-verify the mechanism if that trade is ever worth revisiting.

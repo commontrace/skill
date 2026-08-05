@@ -46,16 +46,11 @@ class HookTestCase(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
 
-        # Offline guarantee: no API key from the environment either. That now
-        # includes CLAUDE_PLUGIN_OPTION_API_KEY — Claude Code exports the
-        # plugin's userConfig options into every hook process, so a developer
-        # running this suite with the plugin installed and configured would
-        # otherwise hand their real contributor key to the tests.
+        # Offline guarantee: no API key from the environment either.
         env_patcher = mock.patch.dict(os.environ)
         env_patcher.start()
         self.addCleanup(env_patcher.stop)
         os.environ.pop("COMMONTRACE_API_KEY", None)
-        os.environ.pop("CLAUDE_PLUGIN_OPTION_API_KEY", None)
 
         self.state_dir = self.tmp_path / "session-test"
         self.state_dir.mkdir()

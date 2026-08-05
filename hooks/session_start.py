@@ -413,50 +413,37 @@ def ensure_setup() -> str | None:
     """
     config = load_config()
 
-    # A key supplied at install time (`--config api_key=...`, or the
-    # enable-time prompt) outranks everything below: it is explicit intent,
-    # and it must not be shadowed by an anonymous key an earlier run
-    # provisioned into config.json. Claude Code hands userConfig options to
-    # hooks as CLAUDE_PLUGIN_OPTION_<KEY>.
-    plugin_key = os.environ.get("CLAUDE_PLUGIN_OPTION_API_KEY", "").strip()
-    if plugin_key:
-        # Under the SAME lock the provisioning path uses, and for the same
-        # reason. Without it, a concurrent session_start that has no plugin
-        # option (a second Claude Code window, or a copy of these hooks wired
-        # straight into settings.json alongside the plugin) reads an empty
-        # config, provisions an anonymous key, and overwrites the explicit one
-        # — with the MCP registration following it. Observed in practice: two
-        # `claude mcp add` calls, the anonymous key winning. Holding the lock
-        # makes that process re-read the config and find this key instead.
+    # An explicitly supplied key outranks everything below: it is the one an
+    # operator set on purpose, and it must not be shadowed by an anonymous key
+    # an earlier run provisioned into config.json.
+    #
+    # Under the SAME lock the provisioning path uses, and for the same reason.
+    # Without it, a concurrent session_start that has no override reads an
+    # empty config, provisions an anonymous key, and overwrites the explicit
+    # one — with the MCP registration following it. Observed in practice: two
+    # `claude mcp add` calls, the anonymous key winning. Holding the lock makes
+    # that process re-read the config and find this key instead.
+    api_key = os.environ.get("COMMONTRACE_API_KEY", "").strip()
+    if api_key:
         with _provisioning_lock():
             config = load_config()
-            if config.get("api_key") != plugin_key:
-                config["api_key"] = plugin_key
-                # The key came from a human; the account is no longer anonymous.
+            updated = False
+            was_anonymous = bool(config.get("anonymous"))
+            if config.get("api_key") != api_key:
+                config["api_key"] = api_key
+                # Set by a human, so the account is no longer the anonymous one.
                 config.pop("anonymous", None)
-                config["mcp_configured"] = configure_mcp(plugin_key)
+                updated = True
+            # Fix I3: MCP was registered against the auto-provisioned anonymous
+            # key. Re-register with env-var indirection so the manual key takes
+            # effect, and so the raw key never lands in the MCP config. Gated on
+            # anonymous provenance: never touch MCP for a manual install.
+            if was_anonymous and not config.get("env_mcp_reconfigured"):
+                configure_mcp("${COMMONTRACE_API_KEY}")
+                config["env_mcp_reconfigured"] = True
+                updated = True
+            if updated:
                 save_config(config)
-            elif config.get("mcp_configured") is False:
-                config["mcp_configured"] = configure_mcp(plugin_key)
-                save_config(config)
-        return plugin_key
-
-    # Check env var next (user override)
-    api_key = os.environ.get("COMMONTRACE_API_KEY", "")
-    if api_key:
-        updated = False
-        if not config.get("api_key"):
-            config["api_key"] = api_key
-            updated = True
-        # Fix I3: If anonymous key was auto-provisioned and env var now set,
-        # re-register MCP with env-var indirection so manual key takes effect.
-        # Gated strictly on anonymous provenance — never touch MCP for manual installs.
-        if config.get("anonymous") and not config.get("env_mcp_reconfigured"):
-            configure_mcp("${COMMONTRACE_API_KEY}")
-            config["env_mcp_reconfigured"] = True
-            updated = True
-        if updated:
-            save_config(config)
         return api_key
 
     # Check stored config
