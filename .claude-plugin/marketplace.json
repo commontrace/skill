@@ -5,7 +5,7 @@
     "email": "support@commontrace.dev"
   },
   "metadata": {
-    "description": "CommonTrace — a shared knowledge base for AI coding agents.",
+    "description": "CommonTrace: a shared knowledge base for AI agents.",
     "homepage": "https://commontrace.org"
   },
   "plugins": [

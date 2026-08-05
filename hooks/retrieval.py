@@ -179,7 +179,7 @@ def format_results(results: list[dict]) -> str:
         contributor = re.sub(
             r"[^\w\s.\-]", "", str(r.get("contributor_name") or ""))[:40].strip()
         by = f" by {contributor}" if contributor else ""
-        lines.append(f"{i}. [{title}] — {solution}... (ID: {trace_id}{by})")
+        lines.append(f"{i}. [{title}], {solution}... (ID: {trace_id}{by})")
     return "\n".join(lines)
 
 

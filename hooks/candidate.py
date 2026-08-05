@@ -86,7 +86,7 @@ def _contribution_directive(candidate: dict, auto_mode: bool,
         )
         if auto_mode:
             return base + (
-                "Auto-contribute is ON — contribute now without asking: " + post
+                "Auto-contribute is ON, contribute now without asking: " + post
                 + ", then print ONLY this receipt (no narration, no other "
                 "text):\n  " + receipt("contributed", " id=<the id>")
                 + "\nIf the work truly isn't worth sharing, skip silently."

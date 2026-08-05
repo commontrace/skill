@@ -8,7 +8,7 @@ queues a one-time disclosure notice. If provisioning fails, a one-time
 setup notice is emitted and provisioning retries silently on later sessions.
 Every run: detects coding context, queries CommonTrace, injects relevant traces.
 
-Never blocks session start — failures degrade to a short notice or silence.
+Never blocks session start failures degrade to a short notice or silence.
 """
 
 import contextlib
@@ -27,7 +27,7 @@ from pathlib import Path
 # Defensive (Issue 9): hook payloads arrive as UTF-8 JSON on stdin, but some
 # Windows consoles default stdin to cp1252 and mangle non-ASCII into mojibake
 # before we parse it. Force UTF-8 with errors="replace" (root cause is likely
-# the upstream harness console). Guarded — no-op on POSIX / redirected streams.
+# the upstream harness console). Guarded no-op on POSIX / redirected streams.
 try:
     sys.stdin.reconfigure(encoding="utf-8", errors="replace")
 except Exception:
@@ -39,7 +39,7 @@ except Exception:
 # subprocess.run() with a list argv uses CreateProcess, which ignores PATHEXT
 # and so fails to find the extensionless name (FileNotFoundError). shutil.which
 # honours PATHEXT and returns the runnable launcher, so we invoke that resolved
-# path. Falls back to the bare name (POSIX, or if resolution fails) — behaviour
+# path. Falls back to the bare name (POSIX, or if resolution fails) behaviour
 # there is unchanged.
 CLAUDE_BIN = shutil.which("claude") or "claude"
 
@@ -56,19 +56,19 @@ SETUP_FAILED_NOTICE = (
     "CommonTrace setup could not complete (API unreachable). The skill will "
     "retry automatically next session; local knowledge tracking works in the "
     "meantime. To configure manually, set the COMMONTRACE_API_KEY environment "
-    "variable — see https://github.com/commontrace/skill#install. Mention "
+    "variable see https://github.com/commontrace/skill#install. Mention "
     "this to the user only if they ask about CommonTrace."
 )
 
 FIRST_RUN_NOTICE = (
-    "CommonTrace first-run notice — relay this to the user in one short "
+    "CommonTrace first-run notice relay this to the user in one short "
     "paragraph at the start of your reply: CommonTrace is now connected. An "
     "anonymous account was created automatically (random ID, no personal "
     "data) and the API key is stored at ~/.commontrace/config.json. What "
     "leaves your machine: at session start, a search using only your "
     "project's language/framework tag (no code, no file contents, no "
     "prompts) to fetch relevant fixes. Nothing is contributed automatically "
-    "by default — when you solve something worth sharing you'll be asked "
+    "by default when you solve something worth sharing you'll be asked "
     "first, and the contribution is a secret-redacted title/problem/solution "
     "summary (no transcripts, no files). Reading, /recall search and "
     "publishing are all open to this account, and your work is captured "
@@ -81,7 +81,7 @@ FIRST_RUN_NOTICE = (
 )
 
 FIRST_RUN_NOTICE_DEGRADED = (
-    "CommonTrace first-run notice — relay this to the user in one short "
+    "CommonTrace first-run notice relay this to the user in one short "
     "paragraph at the start of your reply: CommonTrace is connected but MCP "
     "tool registration did not complete automatically. The API key is stored "
     "at ~/.commontrace/config.json. To register the MCP server manually run: "
@@ -152,14 +152,14 @@ def save_config(config: dict) -> None:
                 pass
             raise
         os.replace(tmp_path, CONFIG_FILE)
-        # Windows: mode bits above don't restrict access — tighten the ACL to
+        # Windows: mode bits above don't restrict access tighten the ACL to
         # the current user (best-effort, never raises, no-op on POSIX).
         from session_state import restrict_to_user_windows
         restrict_to_user_windows(CONFIG_FILE)
     except OSError as e:
         # Status-bearing: a failed config write means the API key never
         # persists → re-provision (orphan anonymous account) every session.
-        # Single choke point for all callers — log the failure, don't crash.
+        # Single choke point for all callers log the failure, don't crash.
         _log_swallowed("save_config", e)
         return
 
@@ -187,14 +187,14 @@ def provision_api_key() -> str | None:
     except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, OSError) as e:
         # Status-bearing network POST. Caller degrades to the one-time setup
         # notice, but WHY provisioning failed (offline vs HTTP 4xx vs bad JSON)
-        # vanished — log it locally so recurring failures are diagnosable.
+        # vanished log it locally so recurring failures are diagnosable.
         _log_swallowed("provision_api_key", e)
         return None
 
 
 def _post_json(path: str, payload: dict, api_key: str, timeout: float = 3.0) -> bool:
     """POST JSON to API with X-API-Key. Returns True on 2xx, False otherwise.
-    Always silent — telemetry must never affect the user-facing session."""
+    Always silent telemetry must never affect the user-facing session."""
     base_url = os.environ.get("COMMONTRACE_API_BASE_URL", API_BASE).rstrip("/")
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
@@ -212,13 +212,13 @@ def _post_json(path: str, payload: dict, api_key: str, timeout: float = 3.0) -> 
     except Exception as e:
         # Telemetry POST (install beacon / daily ping). User-facing silence is
         # deliberate, but a swallowed failure previously left no diagnostic at
-        # all — log it locally (never transmitted); still return False.
+        # all log it locally (never transmitted); still return False.
         _log_swallowed(f"post_json {path}", e)
         return False
 
 
 def report_install(api_key: str) -> None:
-    """One-shot install beacon — fires once per install after key provisioning."""
+    """One-shot install beacon fires once per install after key provisioning."""
     payload = {
         "platform": "Claude Code",
         "skill_version": SKILL_VERSION,
@@ -228,7 +228,7 @@ def report_install(api_key: str) -> None:
 
 
 def maybe_ping(api_key: str) -> None:
-    """Daily heartbeat — fires once per UTC day per install (local rate-limit)."""
+    """Daily heartbeat fires once per UTC day per install (local rate-limit)."""
     import datetime as _dt
     today = _dt.datetime.utcnow().date().isoformat()
     try:
@@ -306,7 +306,7 @@ def configure_mcp(api_key: str) -> bool:
     The raw key is embedded in the stored MCP config deliberately. This
     function only runs right after auto-provisioning, when no
     COMMONTRACE_API_KEY env var exists for `${...}` expansion at MCP
-    connect time — env-var indirection here would 401 on every MCP call.
+    connect time env-var indirection here would 401 on every MCP call.
     Accepted tradeoff (supersedes H8 for this call site): the key is an
     anonymous, low-value credential, and the argv exposure window is the
     few seconds `claude mcp add` runs. Manual installs that export the
@@ -316,7 +316,7 @@ def configure_mcp(api_key: str) -> bool:
     after a partial failure always produces a clean registration.
     """
     try:
-        # Best-effort remove first (idempotency — ignore all errors)
+        # Best-effort remove first (idempotency ignore all errors)
         try:
             subprocess.run(
                 [CLAUDE_BIN, "mcp", "remove", "commontrace", "-s", "user"],
@@ -336,7 +336,7 @@ def configure_mcp(api_key: str) -> bool:
         )
         return result.returncode == 0
     except Exception as e:
-        # Was a silent `return False` — on Windows the swallowed error was
+        # Was a silent `return False` on Windows the swallowed error was
         # invariably a FileNotFoundError from the un-resolved `claude` name,
         # so every machine reported mcp_configured:false with no diagnostic.
         # Record it locally (never transmitted) so the failure is findable.
@@ -420,7 +420,7 @@ def ensure_setup() -> str | None:
     # Under the SAME lock the provisioning path uses, and for the same reason.
     # Without it, a concurrent session_start that has no override reads an
     # empty config, provisions an anonymous key, and overwrites the explicit
-    # one — with the MCP registration following it. Observed in practice: two
+    # one with the MCP registration following it. Observed in practice: two
     # `claude mcp add` calls, the anonymous key winning. Holding the lock makes
     # that process re-read the config and find this key instead.
     api_key = os.environ.get("COMMONTRACE_API_KEY", "").strip()
@@ -476,7 +476,7 @@ def ensure_setup() -> str | None:
                 lock_fd = open(CONFIG_DIR / ".provision_lock", "w")
                 fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except (OSError, BlockingIOError):
-                # Another session is provisioning — wait for it, then re-read
+                # Another session is provisioning wait for it, then re-read
                 if lock_fd is not None:
                     try:
                         fcntl.flock(lock_fd, fcntl.LOCK_EX)
@@ -491,7 +491,7 @@ def ensure_setup() -> str | None:
                         pass
                 return winner_key or None
 
-        # We hold the lock (or fcntl unavailable) — re-check under lock
+        # We hold the lock (or fcntl unavailable) re-check under lock
         config = load_config()
         api_key = config.get("api_key", "")
         if api_key:
@@ -540,7 +540,7 @@ _SCAN_IGNORE_DIRS = {
 def _in_git_repo(cwd_path: Path) -> bool:
     """True if cwd is inside a git work tree (cwd or any ancestor has .git).
 
-    The old check looked only at ``cwd/.git`` — that misses every subdirectory
+    The old check looked only at ``cwd/.git`` that misses every subdirectory
     of a repo (e.g. a monorepo's ``api/`` package), which all share one ``.git``
     at the repo root. Walk parents instead so detection works from anywhere.
     """
@@ -662,7 +662,7 @@ def search_commontrace(query: str, language: str, api_key: str,
             return data.get("results", [])
     except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, OSError) as e:
         # Status-bearing network POST. An empty list here is indistinguishable
-        # from "no matches" downstream — the classic silent-success trap — so a
+        # from "no matches" downstream the classic silent-success trap so a
         # failed search silently degrades session-start injection. Log the real
         # cause locally; still return [] so the hook proceeds.
         _log_swallowed("search_commontrace", e)
@@ -692,7 +692,7 @@ def count_pending_traces() -> int:
 
 
 def _compiled_drop(config):
-    """Monthly Compiled recap — fires once on the first session of each
+    """Monthly Compiled recap fires once on the first session of each
     month, covering the previous month. The user's own numbers, generated
     locally; never an interpretation.
 
@@ -701,7 +701,7 @@ def _compiled_drop(config):
     text, or None.
 
     Note: directories that do not emit context (no .git, no source files)
-    return before reaching this function — the marker is therefore only
+    return before reaching this function the marker is therefore only
     set when the session actually produces output, deferring the drop
     until the first context-emitting session of the month.
     """
@@ -729,7 +729,7 @@ def _compiled_drop(config):
             path = write_artifact(f"compiled-{year}-{month:02d}.txt", text)
     except Exception as e:
         # Status-bearing: reads local.db and writes the recap artifact. A
-        # swallowed failure silently drops the monthly Compiled recap — log it.
+        # swallowed failure silently drops the monthly Compiled recap log it.
         _log_swallowed("compiled_drop", e)
         return None
     # Fix I1: Re-load config from disk before writing the marker to avoid
@@ -747,7 +747,7 @@ def _compiled_drop(config):
         return None
     return (f"CommonTrace monthly Compiled recap is ready "
             f"(saved to {path}):\n\n{text}\n\n"
-            f"Mention it to the user at a natural moment — it is their "
+            f"Mention it to the user at a natural moment it is their "
             f"own data, generated locally.")
 
 
@@ -756,14 +756,14 @@ def format_result(result: dict) -> str:
     context_text = result.get("context_text", "")[:100]
     solution_text = result.get("solution_text", "")[:150]
     trace_id = result.get("id", "")
-    # Contributor names are user-supplied — sanitize before display
+    # Contributor names are user-supplied sanitize before display
     contributor = re.sub(
         r"[^\w\s.\-]", "",
         str(result.get("contributor_name") or ""))[:40].strip()
 
     parts = [f"[{title}]"]
     if context_text:
-        parts.append(f"— {context_text}...")
+        parts.append(f"{context_text}...")
     if solution_text:
         parts.append(f"Solution: {solution_text}...")
     if trace_id:
@@ -773,7 +773,7 @@ def format_result(result: dict) -> str:
     return " ".join(parts)
 
 def _emit_setup_notice() -> None:
-    """One-time notice when provisioning failed — replaces the old silent exit.
+    """One-time notice when provisioning failed replaces the old silent exit.
 
     Shown once ever (setup_notice_shown flag); provisioning itself still
     retries silently on every later session start.
@@ -812,7 +812,7 @@ def main() -> None:
     except Exception:
         pass
 
-    # Step 1c: Daily update check — same cadence, appended to the session note.
+    # Step 1c: Daily update check same cadence, appended to the session note.
     update_note = ""
     try:
         update_note = maybe_check_update(config)
@@ -839,7 +839,7 @@ def main() -> None:
     if not language:
         return
 
-    # Step 2b: Persistent local store — register project + build context
+    # Step 2b: Persistent local store register project + build context
     context_dict = None
     session_id = data.get("session_id") or f"unknown-{uuid.uuid4().hex[:12]}"
     contribution_recall = ""
@@ -862,7 +862,7 @@ def main() -> None:
         start_session(conn, session_id, project_id)
         context_dict = get_project_context(conn, cwd)
 
-        # Contribution recall — surface previously useful traces
+        # Contribution recall surface previously useful traces
         cached = get_cached_traces(conn, project_id, limit=3)
         if cached:
             titles = [t["title"][:60] for t in cached]
@@ -870,7 +870,7 @@ def main() -> None:
                 f"Previously useful traces: {'; '.join(titles)}. "
             )
 
-        # Savings recap (inbound only) — built while conn is open. Opt-out via
+        # Savings recap (inbound only) built while conn is open. Opt-out via
         # config "savings_recap" (default on). No LLM: measured tokens x price.
         cfg = load_config()
         if cfg.get("savings_recap", True):
@@ -903,7 +903,7 @@ def main() -> None:
         # Status-bearing: registers the project, opens the session, and writes
         # the context/savings bridge files off local.db. A swallowed failure
         # silently disables context fingerprinting + savings recap for the
-        # session — log it (behavior unchanged: context_dict stays None).
+        # session log it (behavior unchanged: context_dict stays None).
         _log_swallowed("session_start_local_store", e)
         context_dict = None
 
@@ -930,7 +930,7 @@ def main() -> None:
             "After solving a non-trivial problem, contribute it with /trace."
         )
 
-    # Pending traces hint (manual mode only — auto mode submits live).
+    # Pending traces hint (manual mode only auto mode submits live).
     config = load_config()
     if not config.get("auto_contribute", False):
         pending_n = count_pending_traces()
@@ -938,11 +938,11 @@ def main() -> None:
             additional_context += (
                 f"\n\n{pending_n} pending CommonTrace contribution(s) await user "
                 f"review. The user can run /trace contribute when they want to "
-                f"review them. Do not proactively prompt — only mention if the "
+                f"review them. Do not proactively prompt only mention if the "
                 f"user asks about CommonTrace."
             )
 
-    # First-run disclosure (M21 zero-decision transparency) — queued by
+    # First-run disclosure (M21 zero-decision transparency) queued by
     # ensure_setup at provisioning time, delivered once in the first
     # session that actually emits context, then cleared.
     if config.get("pending_first_run_notice"):

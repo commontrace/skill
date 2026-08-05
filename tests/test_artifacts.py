@@ -227,7 +227,7 @@ class TestCompiledRecap(HookTestCase):
         conn = self.get_conn()
         self._seed_month(conn)
         text = artifacts.compiled_recap(conn, 2026, 5)
-        self.assertIn("CommonTrace Compiled — May 2026", text)
+        self.assertIn("CommonTrace Compiled, May 2026", text)
         self.assertIn("2 sessions", text)
         self.assertIn("15 errors hit · 7 resolutions", text)
         self.assertIn("1 error signature solved for good", text)

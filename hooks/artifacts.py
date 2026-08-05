@@ -372,12 +372,12 @@ def render_brain_html(data):
 </head>
 <body>
 <h1>My agent's brain</h1>
-<p>Every dot is an error signature my coding agent fought and remembered.
+<p>Every dot is an error signature my agent fought and remembered.
 Size is how hard the fight was, color is how recently the knowledge was
 used, fade is decay. Filled dots are solved; hollow dots are still open.</p>
 <figure>{svg}</figure>
 <p class="legend">Temperature:{legend}</p>
-<footer>Generated locally by CommonTrace on {date_str} — your agent's
+<footer>Generated locally by CommonTrace on {date_str}, your agent's
 memory, on your machine. Aggregate shapes only: no code, no error text,
 no file names ever leave local.db.</footer>
 </body>
@@ -451,7 +451,7 @@ def compiled_recap(conn, year, month):
         (start, end)).fetchone()
     label = calendar.month_name[month]
     lines = [
-        f"CommonTrace Compiled — {label} {year}",
+        f"CommonTrace Compiled, {label} {year}",
         "",
         f"  {sess['n']} session{'s' if sess['n'] != 1 else ''}",
         f"  {sess['errs'] or 0} errors hit · {sess['fixes'] or 0} resolutions",
@@ -489,7 +489,7 @@ def compiled_recap(conn, year, month):
         pass
     lines.append("")
     lines.append("  Your agent's own numbers, from your machine. "
-                 "— commontrace.org")
+                 "· commontrace.org")
     return "\n".join(lines)
 
 
@@ -584,14 +584,14 @@ def main(argv):
             from local_store import savings_totals
             totals = savings_totals(conn)
             if totals["events"] == 0:
-                print("No savings recorded yet — keep using CommonTrace.")
+                print("No savings recorded yet, keep using CommonTrace.")
                 return 0
             print("CommonTrace savings (lifetime, inbound)")
             print(f"  time saved   : {fmt_duration(totals['minutes'])}")
             print(f"  money saved  : ~${money_usd(totals['tokens'])}")
             print(f"  events       : {totals['events']}")
             print("  Measured from your own resolutions, on your machine. "
-                  "— commontrace.org")
+                  "· commontrace.org")
             return 0
         print(f"Unknown command: {cmd}. "
               f"Usage: artifacts.py [brain|recap [YYYY-MM]|savings]")

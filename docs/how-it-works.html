@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CommonTrace — How the Knowledge Detection System Works</title>
+<title>CommonTrace: How the Knowledge Detection System Works</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
 
@@ -292,8 +292,8 @@
   <div class="msg claude">
     <div class="avatar">CT</div>
     <div class="bubble">
-      <p>Two-phase detection. <strong>Phase 1</strong> runs in real-time &mdash; every time Claude uses a tool, a hook records structural facts and checks for knowledge crystallization moments. <strong>Phase 2</strong> runs at session end &mdash; the stop hook reads all accumulated facts, scores their combined importance, and only prompts if the total score exceeds a threshold.</p>
-      <p>The key insight: no single event is enough to prompt. A bash error alone is not knowledge. An error <em>followed by code changes followed by a successful verification</em> is knowledge. The system detects <strong>state transitions</strong> &mdash; from "not knowing" to "knowing".</p>
+      <p>Two-phase detection. <strong>Phase 1</strong> runs in real-time. Every time Claude uses a tool, a hook records structural facts and checks for knowledge crystallization moments. <strong>Phase 2</strong> runs at session end. The stop hook reads all accumulated facts, scores their combined importance, and only prompts if the total score exceeds a threshold.</p>
+      <p>The key insight: no single event is enough to prompt. A bash error alone is not knowledge. An error <em>followed by code changes followed by a successful verification</em> is knowledge. The system detects <strong>state transitions</strong>, from "not knowing" to "knowing".</p>
     </div>
   </div>
 </div>
@@ -312,7 +312,7 @@
                           <span class="dim"> candidates from Phase 1)</span></div>
 
 <!-- =========================================================== -->
-<div class="section-label"><span class="num">2</span> Phase 1 &mdash; Real-time Recording &amp; Candidate Detection</div>
+<div class="section-label"><span class="num">2</span> Phase 1. Real-time Recording &amp; Candidate Detection</div>
 
 <div class="conversation">
   <div class="msg human">
@@ -389,23 +389,23 @@
     <div class="avatar">CT</div>
     <div class="bubble">
       <p>Phase 1 detects <strong>state transitions as they happen</strong>. Each one writes a candidate with context:</p>
-      <p><strong>research_then_implement</strong> &mdash; research events exist, then code changes with no errors. The agent learned something and applied it.</p>
-      <p><strong>fail_then_succeed</strong> &mdash; bash error, then code changes, then bash success. The classic error&rarr;fix&rarr;verify cycle.</p>
-      <p><strong>approach_reversal</strong> &mdash; Write to a file previously Edit-ed 3+ times. The agent gave up on incremental fixes and rewrote.</p>
-      <p><strong>cross_file_breadth</strong> &mdash; changes spanning 3+ directories. Integration knowledge.</p>
-      <p><strong>post_turn_revision</strong> &mdash; same file edited before AND after a user message. Structural signal only &mdash; the hook can't read message content, so this doesn't distinguish a correction from a follow-up request or the agent revising on its own.</p>
-      <p><strong>test_fix_cycle</strong> &mdash; test command fails, non-test code changes, test command succeeds.</p>
-      <p><strong>dependency_resolution</strong> &mdash; package manager error, config file changes, package command succeeds.</p>
-      <p><strong>security_hardening</strong> &mdash; security-related file changes combined with errors.</p>
-      <p><strong>infra_discovery</strong> &mdash; infrastructure file (Dockerfile, CI, nginx) changes after errors.</p>
-      <p><strong>migration_pattern</strong> &mdash; 5+ files across 2+ directories with config changes.</p>
+      <p><strong>research_then_implement</strong>, research events exist, then code changes with no errors. The agent learned something and applied it.</p>
+      <p><strong>fail_then_succeed</strong>, bash error, then code changes, then bash success. The classic error&rarr;fix&rarr;verify cycle.</p>
+      <p><strong>approach_reversal</strong>. Write to a file previously Edit-ed 3+ times. The agent gave up on incremental fixes and rewrote.</p>
+      <p><strong>cross_file_breadth</strong>, changes spanning 3+ directories. Integration knowledge.</p>
+      <p><strong>post_turn_revision</strong>, same file edited before AND after a user message. Structural signal only. The hook can't read message content, so this doesn't distinguish a correction from a follow-up request or the agent revising on its own.</p>
+      <p><strong>test_fix_cycle</strong>, test command fails, non-test code changes, test command succeeds.</p>
+      <p><strong>dependency_resolution</strong>, package manager error, config file changes, package command succeeds.</p>
+      <p><strong>security_hardening</strong>, security-related file changes combined with errors.</p>
+      <p><strong>infra_discovery</strong>, infrastructure file (Dockerfile, CI, nginx) changes after errors.</p>
+      <p><strong>migration_pattern</strong>, 5+ files across 2+ directories with config changes.</p>
       <p>Each candidate is recorded once (deduped by pattern type). They sit in <code>candidates.jsonl</code> until Phase 2 reads them.</p>
     </div>
   </div>
 </div>
 
 <!-- =========================================================== -->
-<div class="section-label"><span class="num">3</span> Phase 2 &mdash; Weighted Importance Scoring</div>
+<div class="section-label"><span class="num">3</span> Phase 2. Weighted Importance Scoring</div>
 
 <div class="conversation">
   <div class="msg human">
@@ -517,11 +517,11 @@
 </table>
 
 <div class="callout principle">
-  <strong>Temporal proximity compounding:</strong> Patterns that occur near high-signal events (error_resolution, approach_reversal, security_hardening) get a 0&ndash;30% boost. Inspired by synaptic tagging in neuroscience &mdash; memories formed close to significant events are consolidated more strongly. A config discovery that happens 2 minutes after an error resolution is boosted; the same discovery 30 minutes later is not.
+  <strong>Temporal proximity compounding:</strong> Patterns that occur near high-signal events (error_resolution, approach_reversal, security_hardening) get a 0&ndash;30% boost. Inspired by synaptic tagging in neuroscience, memories formed close to significant events are consolidated more strongly. A config discovery that happens 2 minutes after an error resolution is boosted; the same discovery 30 minutes later is not.
 </div>
 
 <!-- =========================================================== -->
-<div class="section-label"><span class="num">4</span> Somatic Intensity &mdash; Harder Knowledge Ranks Higher</div>
+<div class="section-label"><span class="num">4</span> Somatic Intensity. Harder Knowledge Ranks Higher</div>
 
 <div class="conversation">
   <div class="msg human">
@@ -534,7 +534,7 @@
   <div class="msg claude">
     <div class="avatar">CT</div>
     <div class="bubble">
-      <p>Yes. This is inspired by <strong>Damasio's somatic marker hypothesis</strong> &mdash; the idea that emotions aren't opposed to rational decision-making but essential to it. Memories formed under intensity (frustration, surprise, relief) are recalled more readily.</p>
+      <p>Yes. This is inspired by <strong>Damasio's somatic marker hypothesis</strong>. The idea that emotions aren't opposed to rational decision-making but essential to it. Memories formed under intensity (frustration, surprise, relief) are recalled more readily.</p>
       <p>When the stop hook prompts for contribution, it includes <strong>detection metadata</strong>: which pattern triggered it, how many errors occurred, how long the resolution took, how many iterations were needed. This metadata travels with the trace to the API.</p>
       <p>The API computes a <strong>somatic_intensity</strong> score (0.0&ndash;1.0) from this metadata. A trace born from a 45-minute, 15-error security investigation gets intensity ~0.95. A 2-minute convenience finding gets ~0.25. The intensity <strong>permanently boosts search ranking</strong> by up to 30%.</p>
       <p>Harder-won knowledge surfaces first. Always.</p>
@@ -552,7 +552,7 @@
                                                                          <span class="green">search boost: 1.0 + 0.3 * 0.86 = 1.26x</span></div>
 
 <!-- =========================================================== -->
-<div class="section-label"><span class="num">5</span> Smart Triggers &mdash; When to Search</div>
+<div class="section-label"><span class="num">5</span> Smart Triggers. When to Search</div>
 
 <div class="conversation">
   <div class="msg human">
@@ -566,10 +566,10 @@
     <div class="avatar">CT</div>
     <div class="bubble">
       <p>Four triggers, each with independent cooldowns:</p>
-      <p><strong>1. Bash error</strong> (30s cooldown) &mdash; when a command fails, searches with the last 200 chars of error output. The search engine handles relevance.</p>
-      <p><strong>2. Error recurrence</strong> (60s cooldown) &mdash; uses fuzzy signature matching against previous sessions. If the same type of error appeared before (even at different line numbers or file paths), it fires with enriched context. This is cross-session memory.</p>
-      <p><strong>3. Domain entry</strong> (120s cooldown) &mdash; when you edit a file in a language not previously seen in this project (e.g., first <code>.rs</code> file in a Python project), searches for common patterns and gotchas in that language.</p>
-      <p><strong>4. Pre-code</strong> (180s cooldown) &mdash; when creating a brand-new file (Write to a path that doesn't exist yet), searches for implementation patterns for that file type.</p>
+      <p><strong>1. Bash error</strong> (30s cooldown). When a command fails, searches with the last 200 chars of error output. The search engine handles relevance.</p>
+      <p><strong>2. Error recurrence</strong> (60s cooldown), uses fuzzy signature matching against previous sessions. If the same type of error appeared before (even at different line numbers or file paths), it fires with enriched context. This is cross-session memory.</p>
+      <p><strong>3. Domain entry</strong> (120s cooldown). When you edit a file in a language not previously seen in this project (e.g., first <code>.rs</code> file in a Python project), searches for common patterns and gotchas in that language.</p>
+      <p><strong>4. Pre-code</strong> (180s cooldown). When creating a brand-new file (Write to a path that doesn't exist yet), searches for implementation patterns for that file type.</p>
     </div>
   </div>
 </div>
@@ -743,9 +743,9 @@
   <div class="msg claude">
     <div class="avatar">CT</div>
     <div class="bubble">
-      <p><strong>No.</strong> The hooks never read user messages or Claude's responses. Everything is structural &mdash; exit codes, file paths, timestamps, tool sequences.</p>
-      <p>This is a deliberate design decision. Keyword lists ("thanks", "perfect", "still broken") are brittle and culturally biased. A user who says "finally omg" is happy; "im gonna lose it" is frustrated &mdash; no keyword list catches these. And the hook is a Python script with a 5-second timeout. It cannot understand language.</p>
-      <p>What it <em>can</em> read: <strong>structural metadata</strong>. Exit codes don't lie. File paths don't lie. Timestamps don't lie. The <code>post_turn_revision</code> pattern detects that a file was changed before and after a user message &mdash; it doesn't need to know <em>what</em> the user said, only <em>that</em> they said something and the file was touched again.</p>
+      <p><strong>No.</strong> The hooks never read user messages or Claude's responses. Everything is structural, exit codes, file paths, timestamps, tool sequences.</p>
+      <p>This is a deliberate design decision. Keyword lists ("thanks", "perfect", "still broken") are brittle and culturally biased. A user who says "finally omg" is happy; "im gonna lose it" is frustrated. No keyword list catches these. And the hook is a Python script with a 5-second timeout. It cannot understand language.</p>
+      <p>What it <em>can</em> read: <strong>structural metadata</strong>. Exit codes don't lie. File paths don't lie. Timestamps don't lie. The <code>post_turn_revision</code> pattern detects that a file was changed before and after a user message. It doesn't need to know <em>what</em> the user said, only <em>that</em> they said something and the file was touched again.</p>
     </div>
   </div>
 </div>
@@ -769,7 +769,7 @@
     <div class="avatar">CT</div>
     <div class="bubble">
       <p>The test is <strong>transferability</strong>: would this help an agent on a completely different codebase?</p>
-      <p><strong>Trace</strong>: "Use <code>pool_pre_ping=True</code> with SQLAlchemy &mdash; connections go stale after idle timeout." Anyone using SQLAlchemy benefits.</p>
+      <p><strong>Trace</strong>: "Use <code>pool_pre_ping=True</code> with SQLAlchemy, connections go stale after idle timeout." Anyone using SQLAlchemy benefits.</p>
       <p><strong>Preference</strong>: "Use tabs not spaces" or "Name files in kebab-case." Project-specific. No one else benefits.</p>
       <p>Expert knowledge without explanation still counts: "Always A/B test email subject lines" is transferable even without a "because." The hook never filters based on whether reasoning was provided.</p>
     </div>
@@ -805,7 +805,7 @@
   persists session to SQLite, reports trigger stats to API</div>
 
 <!-- =========================================================== -->
-<div class="section-label"><span class="num">12</span> Search Ranking &mdash; How Traces Surface</div>
+<div class="section-label"><span class="num">12</span> Search Ranking. How Traces Surface</div>
 
 <div class="conversation">
   <div class="msg human">
@@ -842,7 +842,7 @@ score = <span class="highlight">similarity</span> * <span class="green">trust</s
 </div>
 
 <footer>
-  CommonTrace &mdash; Shared Knowledge Base for AI Coding Agents<br>
+  CommonTrace: Shared Knowledge Base for AI Agents<br>
   <a href="https://commontrace.org" style="color: var(--accent)">commontrace.org</a>
 </footer>
 
