@@ -14,29 +14,36 @@ Run these four checks in order, before Round 1. None of them is narrated and non
 
 **1. Right repo.** If `app/payments.py` does not exist, print exactly `Run this inside the commontrace/demo repo (see commontrace.org/tutorial).` and stop.
 
-**2. A key that can actually publish.** Round 3 ends by POSTing a trace, and the invitation gate rejects anonymous keys with a 403. Finding that out at the end wastes the whole take, so find out now:
+**2. A key the API will actually accept.** Round 3 ends by POSTing a trace. Discovering at the receipt that the key was missing or rejected wastes the whole run, so ask the API now rather than guessing from local state:
 ```bash
 H="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/hooks}"; [ -d "$H" ] || H="$(dirname "$(readlink -f ~/.claude/commands/tutorial-contribution.md)")/../hooks"
 python3 - "$H" <<'PY'
-import sys
+import sys, urllib.request, urllib.error
 sys.path.insert(0, sys.argv[1])
 import ct_config
-key, cfg = ct_config.load_api_key(), ct_config.read_config()
+key = ct_config.load_api_key()
 if not key:
     print("NOKEY")
-elif ct_config.plugin_option_api_key() or not cfg.get("anonymous"):
-    print("CONTRIBUTOR")
 else:
-    print("ANON")
+    req = urllib.request.Request(f"{ct_config.api_base_url()}/api/v1/keys/verify",
+                                 headers={"X-API-Key": key})
+    try:
+        urllib.request.urlopen(req, timeout=10)
+        print("OK")
+    except urllib.error.HTTPError as e:
+        print(f"REJECTED {e.code}")
+    except Exception:
+        # Offline or the API is down. Not the key's fault, and not worth
+        # blocking a demo over — the POST below reports its own failure.
+        print("OK")
 PY
 ```
-- `CONTRIBUTOR` → continue silently.
-- `NOKEY` or `ANON` → do NOT start the clip. Print exactly this and stop:
+- `OK` → continue silently. An anonymous auto-provisioned key is fine: publishing is open, `require_email` and `require_contributor` are both pass-throughs on the server, and a fresh keyless registration returns `can_contribute: true`. Verified against the live API 2026-08-05 — do not reintroduce a local "is this an anonymous key" guess, it blocked runs that would have worked.
+- `NOKEY` or `REJECTED …` → do NOT start the clip. Print exactly this and stop:
   ```
-  This clip publishes a trace, which needs a contributor key. Yours is anonymous (read and search only).
-  Get one: redeem an invitation at https://commontrace.org/product, then reinstall with
-    /plugin install commontrace@commontrace --config api_key=ct_...
-  Or film /tutorial-retrieval instead — it needs no key at all.
+  No usable CommonTrace API key, so the contribution at the end of this clip would fail.
+  Open a normal Claude Code session first: the plugin registers an account on its own.
+  Or run /tutorial-retrieval instead, which only reads.
   ```
 
 **3. Re-arm the bug yourself.** Do not ask the user to have run `./reset.sh`. Run `./reset.sh --repo-only` (it restores `app/` and `tests/` to the committed buggy state and leaves the live session's skill state alone). If `reset.sh` is absent, fall back to `git checkout -- app tests`.
