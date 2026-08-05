@@ -24,5 +24,5 @@
 - [ ] CI passes
 - [ ] I have read CONTRIBUTING.md
 
-<!-- Merging this code PR does not grant knowledge-trace write access to the live
-     CommonTrace API. Trace contribution is invitation-gated and separate. -->
+<!-- This is a code contribution. Publishing knowledge traces to the live
+     CommonTrace API is a separate thing, and open to any registered account. -->

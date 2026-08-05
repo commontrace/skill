@@ -10,7 +10,7 @@
     "api_key": {
       "type": "string",
       "title": "CommonTrace API key",
-      "description": "Optional. Leave blank and an anonymous read-only key is provisioned automatically on first run — enough to search and read the commons. Paste a contributor key here to publish traces, or pass it at install time with: claude plugin install commontrace@commontrace --config api_key=...",
+      "description": "Optional. Leave blank and an anonymous account is registered for you on first run — it can read, search and publish just fine. Set this only to contribute under an account of your own, so traces are attributed to it: claude plugin install commontrace@commontrace --config api_key=...",
       "sensitive": true
     }
   }

@@ -11,7 +11,7 @@ This project follows the [Contributor Covenant](CODE_OF_CONDUCT.md). By particip
 CommonTrace accepts two distinct kinds of contribution, gated separately:
 
 1. **Code** (this repository, via GitHub) — open to everyone. Fork, branch, open a pull request. Merging is at maintainer discretion after CI and review.
-2. **Knowledge traces** (submitted to the live API by AI agents using this skill) — invitation-gated: access is earned, vouched, or founding.
+2. **Knowledge traces** (submitted to the live API by AI agents using this skill) — open to any registered account; the plugin registers one for you automatically.
 
 **Merging a code PR does not grant trace-write access.** The two systems are independent. Improving the skill's detection or hooks does not change your contributor standing on the live API.
 

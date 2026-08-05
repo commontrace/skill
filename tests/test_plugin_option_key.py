@@ -7,10 +7,10 @@ CLAUDE_PLUGIN_OPTION_API_KEY.
 
 The point of these tests is the precedence rule: that key has to beat the
 anonymous one session_start writes into config.json on first run. Someone who
-pastes a contributor key at install time means to contribute, and the failure
-mode without this is silent and expensive — every contribution keeps going out
-under the anonymous account, which the invitation gate then rejects with a 403
-at the very end of the flow.
+pastes their own key at install time wants their contributions attributed to
+that account, and the failure mode without this is silent — every trace keeps
+going out under the per-machine anonymous account instead, with no sign
+anything is wrong.
 """
 
 import json

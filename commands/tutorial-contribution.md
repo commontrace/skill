@@ -116,8 +116,8 @@ Round 1 runs immediately when this command is invoked (invoking it is the "fix t
        detail = e.read().decode("utf-8", "replace")[:300]
        print(f"!! CommonTrace refused the trace: HTTP {e.code} {detail}", file=sys.stderr)
        if e.code == 403:
-           print("!! That key cannot publish. Redeem an invitation, then reinstall with "
-                 "--config api_key=ct_...", file=sys.stderr)
+           print("!! Publishing is restricted for this account. Nothing was contributed.",
+                 file=sys.stderr)
    except Exception as e:
        tid = ""
        print(f"!! CommonTrace unreachable: {e}", file=sys.stderr)

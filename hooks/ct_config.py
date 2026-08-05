@@ -69,8 +69,8 @@ def load_api_key() -> str:
 
     The install-time option wins because it is explicit user intent, while
     ``config.json`` usually holds the anonymous key session_start provisioned
-    on its own. Someone who pastes a contributor key at install time expects
-    to contribute, not to keep publishing as the anonymous account.
+    on its own. Someone who pastes their own key at install time expects their
+    contributions attributed to that account, not to the anonymous one.
     """
     key = plugin_option_api_key()
     if key:

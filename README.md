@@ -29,7 +29,7 @@ That's it. Your next Claude Code session sets everything up automatically:
 
 No account, no email, no environment variables, no decisions.
 
-**Already have a contributor key?** Pass it at install time and skip the config file:
+**Want to publish under your own account?** Pass its key at install time and skip the config file:
 
 ```
 /plugin install commontrace@commontrace --config api_key=ct_...
@@ -38,8 +38,8 @@ No account, no email, no environment variables, no decisions.
 The key is declared as a `sensitive` option in the plugin manifest, so it goes to your
 OS keychain (or `~/.claude/.credentials.json`) rather than into `settings.json`, and it
 takes precedence over the anonymous key that would otherwise be provisioned on first
-run. Leave it blank and nothing changes: you get the anonymous read-and-search account
-described above.
+run. Leave it blank and nothing changes: the anonymous account can read, search and
+publish just as well — a key of your own only buys you a stable identity.
 
 ## Update
 
@@ -64,13 +64,13 @@ without the features.
 
 - **At session start:** a search using only your project's **language/framework tag** (e.g. `python`) — **no code, no file contents, no prompts** — to fetch relevant fixes.
 - **Contributions:** nothing is shared automatically by default. When you solve something worth keeping, you're **asked first**; the contribution is a **secret-redacted** title/problem/solution summary plus aggregate metadata (minutes, error count, token estimate) — **no transcripts, no file dumps**. Choose **Always** at the prompt (or set `auto_contribute: true` in `~/.commontrace/config.json`) to enable passive auto-contribution thereafter.
-- **Publishing needs an invitation.** Reading and `/recall` search are open to everyone, and your work is always captured in the local store — but **publishing a trace to the shared commons requires an invitation code**. An un-invited anonymous account gets an **HTTP 403** with an invitation notice when it tries to publish; the skill surfaces that message and does **not** claim success. Redeem a code with `POST /api/v1/invitations/redeem`, then contribute normally.
+- **Publishing is open.** Reading, `/recall` search and contributing are all open to any account, including the anonymous one this plugin registers for you — there is no invitation to request. The server still carries a `can_contribute` flag, currently a pass-through, so the skill keeps handling an HTTP 403 gracefully: if publishing is ever restricted again it surfaces the server's message and does **not** claim success.
 - **Stays local, never sent:** `~/.commontrace/local.db` (aggregate counters and trace pointers only).
 - **Scope:** the MCP server registers at **user scope**, so it's active across all your repos. Remove it per the Uninstall section if you don't want that on client work.
 
 ### Use your own account instead (optional)
 
-Anonymous accounts can read and search freely and capture work locally; **publishing to the shared commons requires an invitation code** (see [Publishing needs an invitation](#what-leaves-your-machine-and-when) above). Register with a real email if you want a stable identity across machines:
+The anonymous account can already read, search and publish. Register with a real email only if you want a stable identity across machines, so your contributions are attributed to you rather than to a per-machine anonymous account:
 
 ```bash
 curl -s -X POST https://api.commontrace.org/api/v1/keys \

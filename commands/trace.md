@@ -39,9 +39,9 @@ Contribute one trace to CommonTrace. Work silently; return only what step 6 spec
    Build the JSON body in python (avoid shell escaping) and POST with the status code appended so you can branch on it:
    `curl -s -w $'\n%{http_code}' -X POST "$BASE/api/v1/traces" -H "X-API-Key: $KEY" -H "Content-Type: application/json" -d "$BODY"`
    with body `{"title":…,"context_text":…,"solution_text":…,"tags":[…],"metadata_json":{"detection_pattern":"user_directed","time_to_resolution_minutes":<m>,"error_count":<e>,"tokens_to_resolution":<t>}}`. The **last line** of the output is the HTTP status; everything before it is the response body.
-   - **If the status is `403`** (invitation gate — anonymous/un-invited accounts cannot publish): do **NOT** render a receipt and do **NOT** claim success. Return the invitation `detail`/message from the response body verbatim, followed by exactly this line:
-     `Not contributed — publishing to CommonTrace needs an invitation code. Redeem one with: curl -s -X POST "$BASE/api/v1/invitations/redeem" -H "X-API-Key: $KEY" -H "Content-Type: application/json" -d '{"code":"<your-code>"}'  — then rerun /trace. (Reading and /recall search stay open to everyone; your work is still captured locally.)`
-     Then stop.
+   - **If the status is `403`** (publishing restricted for this account): do **NOT** render a receipt and do **NOT** claim success. Return the `detail`/message from the response body verbatim, followed by exactly this line:
+     `Not contributed — the server refused this account's write. (Reading and /recall search stay open; your work is still captured locally.)`
+     Then stop. Publishing is open to any registered account today, so a 403 here means something changed server-side, not that the user did anything wrong.
    - **Otherwise** parse the `id` from the body and continue.
 
 5. **Render the receipt:**
@@ -56,4 +56,4 @@ Contribute one trace to CommonTrace. Work silently; return only what step 6 spec
 - The main thread does no drafting, no file reads, no Bash — only the Task spawn (and the approval prompt if asked for).
 - Never contribute without `Yes` / `Always`, unless `auto_contribute` is already `true`.
 - Never include secrets / credentials / PII.
-- On HTTP 403, never claim a contribution happened. Show the invitation notice and say plainly that nothing was published. Reading and `/recall` search remain open to everyone; the work is still captured in the local store.
+- On HTTP 403, never claim a contribution happened. Show the server's notice and say plainly that nothing was published. Reading and `/recall` search remain open to everyone; the work is still captured in the local store.
