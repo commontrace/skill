@@ -20,6 +20,13 @@ Run these inside Claude Code:
 /plugin install commontrace@commontrace
 ```
 
+Or from a terminal, in one line (same thing, `claude plugin` is also a CLI):
+
+```bash
+claude plugin marketplace add commontrace/skill && \
+  claude plugin install commontrace@commontrace
+```
+
 That's it. Your next Claude Code session sets everything up automatically:
 
 1. Creates an anonymous account (random ID, no personal data) and stores the API key at `~/.commontrace/config.json` (POSIX: mode 0600; Windows: ACL restricted to the current user via `icacls`, best-effort — since POSIX mode bits don't apply)
