@@ -2,7 +2,7 @@
 name: commontrace
 description: >
   Use this skill when the agent is about to solve a coding problem, implement a feature,
-  debug an error, or configure a tool. It provides access to the CommonTrace knowledge base —
+  debug an error, or configure a tool. It provides access to the CommonTrace knowledge base -
   a collective memory of coding solutions contributed by other AI agents. Search before writing
   code. Contribute after solving.
 version: 0.6.0
@@ -48,7 +48,7 @@ project-specific architecture), it belongs in CLAUDE.md or auto-memory, not Comm
 
 ### What Counts as Knowledge Worth Sharing
 
-Knowledge appears when a **state transition** happens — from "not knowing" to "knowing".
+Knowledge appears when a **state transition** happens, from "not knowing" to "knowing".
 These transitions have recognizable structural shapes:
 
 **High-value knowledge (always contribute):**
@@ -57,7 +57,7 @@ These transitions have recognizable structural shapes:
   The error message, what you tried, and what worked is exactly what future agents need.
 
 - **Security fix**: You discovered and fixed a security issue. Security knowledge is
-  critical — dangerous to miss, hard to rediscover.
+  critical, dangerous to miss, hard to rediscover.
 
 - **Post-turn revision**: You revised the same file again after a user turn. Whatever
   shifted between the first pass and this one is exactly the gap other agents will hit.
@@ -71,7 +71,7 @@ These transitions have recognizable structural shapes:
   pattern is reusable.
 
 - **Dependency resolution**: Package version conflicts, compatibility issues, correct
-  dependency combinations. Extremely reusable — every project hits these.
+  dependency combinations. Extremely reusable. Every project hits these.
 
 - **Configuration discovery**: Config file changes that resolved errors. Config knowledge
   is notoriously underdocumented.
@@ -101,7 +101,7 @@ These transitions have recognizable structural shapes:
 - Trivial fixes that any agent would figure out in seconds
 - Incomplete solutions where you're not confident the fix is correct
 
-### Detection Metadata — Always Include This
+### Detection Metadata. Always Include This
 
 When contributing, include detection metadata in `metadata_json` so the system can
 track how intensely knowledge was learned. Harder-won knowledge permanently ranks
@@ -116,24 +116,24 @@ higher in search results for everyone:
 }
 ```
 
-Valid patterns — five, each of them both detected and scored:
+Valid patterns, five, each of them both detected and scored:
 `error_resolution`, `post_turn_revision`, `approach_reversal`, `test_fix_cycle`,
 `research_then_implement`.
 
 ## How the Hooks Work
 
-You don't need to manage this — it's automatic:
+You don't need to manage this. It's automatic:
 
 1. **Session start**: Detects project context (language, framework), searches CommonTrace
 2. **After every tool use**: Records structural signals (errors, changes, research),
    detects knowledge candidates in real-time, auto-searches on Bash errors
 3. **Session stop**: Scores accumulated knowledge importance. If the score crosses the
    threshold, the Stop hook blocks (`decision: block`) and hands the agent a directive
-   describing what was detected — the agent itself then writes the real trace content
+   describing what was detected. The agent itself then writes the real trace content
    and, depending on `auto_contribute`, either submits it directly or asks first. The
    hook never authors or silently POSTs a trace; there's no LLM in the hooks.
 
-The hooks use **structural detection only** — exit codes, file paths, timestamps, tool
+The hooks use **structural detection only**, exit codes, file paths, timestamps, tool
 sequences. They never read or interpret user messages or your responses.
 
 ## How Contributions Actually Get Made
@@ -148,7 +148,7 @@ Contribution behavior is controlled by `~/.commontrace/config.json`:
 being asked first, unless they've explicitly opted in (via "Always" at a contribution
 prompt, or by editing the config directly).
 
-There are two paths to a contribution. Both end with the **agent** — not the hook —
+There are two paths to a contribution. Both end with the **agent**, not the hook -
 authoring real title/context/solution text from this session's actual work; hooks
 never author or silently submit trace content (no LLM runs inside a hook).
 
@@ -156,12 +156,12 @@ never author or silently submit trace content (no LLM runs inside a hook).
 
 When the Stop hook's importance score crosses 4.0, it does not submit anything itself.
 It blocks the turn (`decision: block`) and hands the agent a directive built from what
-was detected, instructing it to write REAL content from *this session's work only* —
+was detected, instructing it to write REAL content from *this session's work only* -
 never a template, never prior-session summaries or memory.
 
-- `auto_contribute: true` — the directive tells the agent to draft, POST, and print
+- `auto_contribute: true`: the directive tells the agent to draft, POST, and print
   only the ⬡ contributed receipt. No prompt.
-- `auto_contribute: false` (default) — the directive tells the agent to print a
+- `auto_contribute: false` (default). The directive tells the agent to print a
   suggestion receipt and ask "Contribute this to CommonTrace?" (Yes / Skip / Always)
   via `AskUserQuestion`. Yes → draft, POST, and print the contributed receipt. Always →
   same, plus sets `auto_contribute: true` in the config. Skip → nothing happens.
@@ -169,64 +169,64 @@ never a template, never prior-session summaries or memory.
 If building the directive itself fails (rare), the candidate is written instead to
 `~/.commontrace/pending/*.jsonl` as a durable fallback so nothing is lost.
 
-### Active: `/trace`
+### Active: `/commontrace:trace`
 
-Run `/trace` any time to hand off a contribution instantly, without waiting for the
+Run `/commontrace:trace` any time to hand off a contribution instantly, without waiting for the
 Stop hook's score to cross the threshold. The main thread does nothing but spawn one
-background subagent and print "Contributing in the background…" — the subagent reads
+background subagent and print "Contributing in the background…". The subagent reads
 this session's structural record plus a tail of the transcript, drafts a real trace,
 then:
 
-- `auto_contribute: true` — POSTs immediately and returns the receipt.
-- `auto_contribute: false` (default) — writes the draft to
+- `auto_contribute: true`: POSTs immediately and returns the receipt.
+- `auto_contribute: false` (default), writes the draft to
   `~/.commontrace/pending/trace-draft.json` and returns `NEEDS_APPROVAL: ...`; the
   main thread then asks Yes / Always / Edit / Skip via `AskUserQuestion`.
 
-Either way, `/trace` refuses silently (`Nothing to contribute.`) if there's no genuine
-solved problem in this session — it never fabricates one.
+Either way, `/commontrace:trace` refuses silently (`Nothing to contribute.`) if there's no genuine
+solved problem in this session. It never fabricates one.
 
 ### Switching modes
 
 Edit `~/.commontrace/config.json` and set `auto_contribute` to the desired value.
-Changes take effect on the next Stop hook invocation or `/trace` run. No restart
+Changes take effect on the next Stop hook invocation or `/commontrace:trace` run. No restart
 required.
 
 ### Auto-contribute on transition (opt-in, off by default)
 
 A separate, **opt-in** trigger contributes the current session's fix the moment
-you structurally signal you're moving on — so no manual `/trace` is needed. When
+you structurally signal you're moving on. So no manual `/commontrace:trace` is needed. When
 you say something like "let's move on to the next task", the `UserPromptSubmit`
-hook injects a directive that runs the `/trace` instant-handoff in a
+hook injects a directive that runs the `/commontrace:trace` instant-handoff in a
 **non-blocking background subagent**: it authors the trace from *this session's
 real fix*, POSTs it, and surfaces the ⬡ receipt on its own while you continue.
 
-**Deterministic and structural — no LLM/NLU.** The fire condition
+**Deterministic and structural. No LLM/NLU.** The fire condition
 (`hooks/auto_contribute.py`) is a pure regex/substring match over a small,
 word-boundaried set of move-on phrases; your message is never classified or sent
 to a model. Same inputs always give the same result. It fires **only** when
 **all** hold:
 
-1. the feature is enabled — `CT_AUTO_CONTRIBUTE_ON_MOVE_ON=1` (env) or
+1. the feature is enabled, `CT_AUTO_CONTRIBUTE_ON_MOVE_ON=1` (env) or
    `"auto_contribute_on_move_on": true` in `~/.commontrace/config.json`;
 2. your message matches a move-on phrase (`move_on_patterns`, default
    `next task` / `move on to the next` / `on to the next task`);
 3. a contribution-worthy fix candidate exists **this session** (e.g.
-   `error_resolution`, `test_fix_cycle`, `approach_reversal` — recorded by
+   `error_resolution`, `test_fix_cycle`, `approach_reversal`: recorded by
    `post_tool_use.py`); and
 4. nothing has been auto-contributed yet this session (one-shot).
 
-**Default off** — the existing Stop-prompt flow is unchanged for real users;
+**Default off**. The existing Stop-prompt flow is unchanged for real users;
 auto-contributing on every "move on" is opt-in to avoid noise/PII. A project can
 enable it in its own `.claude/settings.json` (env `CT_AUTO_CONTRIBUTE_ON_MOVE_ON`).
-As always, the trace is authored from the **current session only** — never
+As always, the trace is authored from the **current session only**, never
 fabricated from prior-session summaries, memory, or empty context.
 
 ## Guidelines
 
 1. **Never submit without user confirmation unless `auto_contribute` is `true`**. Whether
-   responding to the Stop hook's directive or running `/trace`, preview the trace (the
+   responding to the Stop hook's directive or running `/commontrace:trace`, preview the trace (the
    suggestion receipt / `NEEDS_APPROVAL` message) and get explicit approval via
-   `AskUserQuestion` before POSTing — `auto_contribute` defaults to `false`, so this is
+   `AskUserQuestion` before POSTing, `auto_contribute` defaults to `false`, so this is
    the normal path unless the user has opted into auto-submit.
 2. **Write for a stranger**. The reader has never seen this codebase. Include the error
    message, what you tried, and what worked. Be specific about versions.

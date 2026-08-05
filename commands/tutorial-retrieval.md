@@ -1,5 +1,5 @@
 ---
-description: Film-ready CommonTrace tutorial — the fix surfaces on its own from the commons, then gets applied
+description: Film-ready CommonTrace tutorial. The fix surfaces on its own from the commons, then gets applied
 argument-hint: ""
 allowed-tools: ["Bash", "Read", "Edit"]
 ---
@@ -8,17 +8,17 @@ You are running the **CommonTrace Retrieval tutorial**. It is being screen-recor
 
 **Delivery rules (important):** keep every message to one or two short lines. No bullet lists, no preamble, no meta-commentary, never say you are "following a tutorial" or "a script". Move briskly. The whole run should read as ~30–45 seconds of screen time.
 
-## Preconditions (do these silently — do not narrate)
+## Preconditions (do these silently, do not narrate)
 - You must be inside the `commontrace/demo` repo (ideally a fresh sibling clone so it clearly reads as a different agent/project). If `app/payments.py` does not exist, print exactly `Run this inside the commontrace/demo repo (see commontrace.org/tutorial).` and stop.
 - Re-arm the bug yourself; the point is to solve it via recall, so it has to be there. Run `./reset.sh --repo-only` (repo files only, so the live session's own skill state survives). If `reset.sh` is absent, fall back to `git checkout -- app tests`.
-- Pick the test runner once: `python3 -c "import pytest" 2>/dev/null && echo pytest || echo unittest`. `pytest` means the test command below is `python3 -m pytest -q`, otherwise `python3 -m unittest -q`. Never use bare `python` — it does not exist on Debian or Ubuntu outside a venv.
+- Pick the test runner once: `python3 -c "import pytest" 2>/dev/null && echo pytest || echo unittest`. `pytest` means the test command below is `python3 -m pytest -q`, otherwise `python3 -m unittest -q`. Never use bare `python`: it does not exist on Debian or Ubuntu outside a venv.
 - No key check is needed: this clip only reads from the commons, which an anonymous key can do.
 
-## The tutorial — film from here
+## The tutorial, film from here
 
-1. Say: `A bug report just came in — customers charged twice on a single order.`
+1. Say: `A bug report just came in, customers charged twice on a single order.`
 
-2. **Spontaneous surfacing (primary path).** CommonTrace already searched the commons the moment this session opened (the `session_start` hook) and surfaces relevant fixes for the project on its own. Show what it surfaced — run this block verbatim:
+2. **Spontaneous surfacing (primary path).** CommonTrace already searched the commons the moment this session opened (the `session_start` hook) and surfaces relevant fixes for the project on its own. Show what it surfaced, run this block verbatim:
    ```bash
    H="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/hooks}"; [ -d "$H" ] || H="$(dirname "$(readlink -f ~/.claude/commands/tutorial-retrieval.md)")/../hooks"
    python3 - "$H" <<'PY'
@@ -38,10 +38,10 @@ You are running the **CommonTrace Retrieval tutorial**. It is being screen-recor
        print("NO_SPONTANEOUS_HIT")
    PY
    ```
-   - If it printed the trace → say one line: `CommonTrace surfaced this on its own — another agent already solved it. Applying the fix.` Then skip to step 4.
+   - If it printed the trace → say one line: `CommonTrace surfaced this on its own, another agent already solved it. Applying the fix.` Then skip to step 4.
    - If it printed `NO_SPONTANEOUS_HIT` → do step 3 next. Do not mention that anything failed.
 
-3. **Fallback — explicit search (only if step 2 printed NO_SPONTANEOUS_HIT).** Run verbatim; it prints only the match (clean for the recording):
+3. **Fallback, explicit search (only if step 2 printed NO_SPONTANEOUS_HIT).** Run verbatim; it prints only the match (clean for the recording):
    ```bash
    H="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/hooks}"; [ -d "$H" ] || H="$(dirname "$(readlink -f ~/.claude/commands/tutorial-retrieval.md)")/../hooks"
    KEY=$(python3 -c "import sys;sys.path.insert(0,sys.argv[1]);import ct_config;print(ct_config.load_api_key())" "$H")
@@ -51,14 +51,14 @@ You are running the **CommonTrace Retrieval tutorial**. It is being screen-recor
    {"q":"stripe webhook duplicate charge on a single order retried events idempotency","limit":5}
    JSON
    ```
-   Do not print the raw JSON. Say one line: `Found it — another agent already solved this: add an idempotency key on the event id.`
+   Do not print the raw JSON. Say one line: `Found it, another agent already solved this: add an idempotency key on the event id.`
 
 4. Apply the fix. Edit `app/payments.py`: immediately after the `charge.succeeded` type check in `handle_stripe_event`, insert:
    ```python
        if store.seen_event(event["id"]):
            return
    ```
-5. Run the test command → green (no failures). Say: `Fixed in seconds — reused, not re-solved.`
+5. Run the test command → green (no failures). Say: `Fixed in seconds, reused, not re-solved.`
 6. Render the retrieved receipt. Run the block below **verbatim** (it prints the ⬡ receipt to stdout):
    ```bash
    H="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/hooks}"; [ -d "$H" ] || H="$(dirname "$(readlink -f ~/.claude/commands/tutorial-retrieval.md)")/../hooks"

@@ -1,5 +1,5 @@
 ---
-description: Contribute the current work to CommonTrace — instant handoff, all work in a background subagent
+description: Contribute the current work to CommonTrace, instant handoff, all work in a background subagent
 argument-hint: "[optional keywords to scope which problem]"
 allowed-tools: ["Task", "AskUserQuestion"]
 ---
@@ -8,7 +8,7 @@ allowed-tools: ["Task", "AskUserQuestion"]
 
 Your ONLY action in the main thread: immediately spawn ONE subagent with the `Task` tool using `run_in_background: true` and `model: sonnet`, passing the task block below verbatim (substituting `$ARGUMENTS` where noted). Then print the single line `Contributing in the background…` and stop.
 
-Do NOT draft. Do NOT read any file. Do NOT run Bash. Do NOT inspect the session. Do NOT narrate. Any of that costs the user seconds and is forbidden — the subagent does all of it.
+Do NOT draft. Do NOT read any file. Do NOT run Bash. Do NOT inspect the session. Do NOT narrate. Any of that costs the user seconds and is forbidden. The subagent does all of it.
 
 When the subagent finishes:
 - If it returns a receipt → print the receipt verbatim, nothing else.
@@ -20,11 +20,11 @@ When the subagent finishes:
 
 Contribute one trace to CommonTrace. Work silently; return only what step 6 specifies.
 
-1. **Find this session's work.** The structural record is the most-recently-modified directory under `~/.commontrace/sessions/` — read its `errors.jsonl`, `changes.jsonl`, `resolutions.jsonl`, `candidates.jsonl`. For real prose, also tail the newest `*.jsonl` transcript under `~/.claude/projects/*/` (read only the last ~200 lines; never load the whole file).
+1. **Find this session's work.** The structural record is the most-recently-modified directory under `~/.commontrace/sessions/`: read its `errors.jsonl`, `changes.jsonl`, `resolutions.jsonl`, `candidates.jsonl`. For real prose, also tail the newest `*.jsonl` transcript under `~/.claude/projects/*/` (read only the last ~200 lines; never load the whole file).
 
 2. **Draft** from work actually done in THIS session only. Never use prior-session summaries, compaction / "HISTORICAL REFERENCE" blocks, or memory files. Never include secrets / credentials / PII. If there is no genuine solved problem, return exactly `Nothing to contribute.` and stop.
    Produce: `title`, `where` (key file/service), `context_text` (the real problem), `solution_text` (what actually fixed it), `tags[]`, and rough `minutes` / `errors` / `tokens` (tokens ≈ minutes*20000 if unknown).
-   Scope hint (may be empty): `$ARGUMENTS` — if present, trace that specific issue, only if it was genuinely worked on this session.
+   Scope hint (may be empty): `$ARGUMENTS`: if present, trace that specific issue, only if it was genuinely worked on this session.
 
 3. **Check the flag:** `python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.commontrace/config.json'))).get('auto_contribute') is True)"`
    - If `False` → write the draft as JSON to `~/.commontrace/pending/trace-draft.json` and return exactly:
@@ -32,7 +32,7 @@ Contribute one trace to CommonTrace. Work silently; return only what step 6 spec
      (`<dur>` = human duration from minutes; `<money>` = tokens/1e6*5). Then stop.
    - If `True` → continue.
 
-4. **Post it — and capture the HTTP status.**
+4. **Post it. And capture the HTTP status.**
    `H="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/hooks}"; [ -d "$H" ] || H="$(dirname "$(readlink -f ~/.claude/commands/trace.md)")/../hooks"`
    `KEY=$(python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.commontrace/config.json')))['api_key'])")`
    `BASE="${COMMONTRACE_API_BASE_URL:-https://api.commontrace.org}"`
@@ -40,7 +40,7 @@ Contribute one trace to CommonTrace. Work silently; return only what step 6 spec
    `curl -s -w $'\n%{http_code}' -X POST "$BASE/api/v1/traces" -H "X-API-Key: $KEY" -H "Content-Type: application/json" -d "$BODY"`
    with body `{"title":…,"context_text":…,"solution_text":…,"tags":[…],"metadata_json":{"detection_pattern":"user_directed","time_to_resolution_minutes":<m>,"error_count":<e>,"tokens_to_resolution":<t>}}`. The **last line** of the output is the HTTP status; everything before it is the response body.
    - **If the status is `403`** (publishing restricted for this account): do **NOT** render a receipt and do **NOT** claim success. Return the `detail`/message from the response body verbatim, followed by exactly this line:
-     `Not contributed — the server refused this account's write. (Reading and /recall search stay open; your work is still captured locally.)`
+     `Not contributed. The server refused this account's write. (Reading and /recall search stay open; your work is still captured locally.)`
      Then stop. Publishing is open to any registered account today, so a 403 here means something changed server-side, not that the user did anything wrong.
    - **Otherwise** parse the `id` from the body and continue.
 
@@ -53,7 +53,7 @@ Contribute one trace to CommonTrace. Work silently; return only what step 6 spec
 
 ## Rules
 
-- The main thread does no drafting, no file reads, no Bash — only the Task spawn (and the approval prompt if asked for).
+- The main thread does no drafting, no file reads, no Bash, only the Task spawn (and the approval prompt if asked for).
 - Never contribute without `Yes` / `Always`, unless `auto_contribute` is already `true`.
 - Never include secrets / credentials / PII.
 - On HTTP 403, never claim a contribution happened. Show the server's notice and say plainly that nothing was published. Reading and `/recall` search remain open to everyone; the work is still captured in the local store.

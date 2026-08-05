@@ -1,4 +1,4 @@
-# envprobe — proves how Claude Code delivers `userConfig` to hooks
+# envprobe, proves how Claude Code delivers `userConfig` to hooks
 
 Unit tests can prove that our hooks *read* `CLAUDE_PLUGIN_OPTION_API_KEY`
 correctly. They cannot prove the other half of the contract: that Claude Code
@@ -29,7 +29,7 @@ Expected:
 
 ## The one thing that will waste your afternoon
 
-The `pluginConfigs` key is the **full plugin id**, `name@marketplace` — not the
+The `pluginConfigs` key is the **full plugin id**, `name@marketplace`: not the
 bare name. With `"envprobe"` instead of `"envprobe@inline"` the hook still runs
 and `plugin_option_vars` comes back **empty**, with no warning anywhere. If you
 are debugging a missing option, read `CLAUDE_PLUGIN_DATA` out of the hook's
@@ -42,8 +42,8 @@ bites when supplying `pluginConfigs` by hand.
 
 ## Why this lives here when CommonTrace declares no `userConfig`
 
-It did, briefly. The option worked end to end — `--config api_key=...` reached
-the hook process, `sensitive: true` kept the value out of `settings.json` — and
+It did, briefly. The option worked end to end, `--config api_key=...` reached
+the hook process, `sensitive: true` kept the value out of `settings.json`: and
 this probe is what proved it. It was removed anyway, because declaring a
 userConfig option makes Claude Code prompt every installer for it, and the
 plugin's whole pitch is that installing asks you nothing. The probe stays as

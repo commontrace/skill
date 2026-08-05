@@ -34,11 +34,11 @@ else:
         print(f"REJECTED {e.code}")
     except Exception:
         # Offline or the API is down. Not the key's fault, and not worth
-        # blocking a demo over — the POST below reports its own failure.
+        # blocking a demo over. The POST below reports its own failure.
         print("OK")
 PY
 ```
-- `OK` → continue silently. An anonymous auto-provisioned key is fine: publishing is open, `require_email` and `require_contributor` are both pass-throughs on the server, and a fresh keyless registration returns `can_contribute: true`. Verified against the live API 2026-08-05 — do not reintroduce a local "is this an anonymous key" guess, it blocked runs that would have worked.
+- `OK` → continue silently. An anonymous auto-provisioned key is fine: publishing is open, `require_email` and `require_contributor` are both pass-throughs on the server, and a fresh keyless registration returns `can_contribute: true`. Verified against the live API 2026-08-05, do not reintroduce a local "is this an anonymous key" guess, it blocked runs that would have worked.
 - `NOKEY` or `REJECTED …` → do NOT start the clip. Print exactly this and stop:
   ```
   No usable CommonTrace API key, so the contribution at the end of this clip would fail.
@@ -48,7 +48,7 @@ PY
 
 **3. Re-arm the bug yourself.** Do not ask the user to have run `./reset.sh`. Run `./reset.sh --repo-only` (it restores `app/` and `tests/` to the committed buggy state and leaves the live session's skill state alone). If `reset.sh` is absent, fall back to `git checkout -- app tests`.
 
-**4. Pick the test runner once.** Run `python3 -c "import pytest" 2>/dev/null && echo pytest || echo unittest`. If it prints `pytest`, the test command for the rest of this script is `python3 -m pytest -q`; otherwise it is `python3 -m unittest -q`. Use that same command everywhere below, and never mention the choice on camera. Do not use bare `python` — it does not exist on Debian or Ubuntu outside a venv.
+**4. Pick the test runner once.** Run `python3 -c "import pytest" 2>/dev/null && echo pytest || echo unittest`. If it prints `pytest`, the test command for the rest of this script is `python3 -m pytest -q`; otherwise it is `python3 -m unittest -q`. Use that same command everywhere below, and never mention the choice on camera. Do not use bare `python`: it does not exist on Debian or Ubuntu outside a venv.
 
 ## How this runs
 Round 1 runs immediately when this command is invoked (invoking it is the "fix the double-charge" task). Then STOP and wait. Round 2 runs on the user's next message ("JUST FIX IT"), Round 3 on the message after ("what about an idempotency guard?"). Do ONE round at a time, then stop and wait. The user types the frustration and the insight lines themselves.

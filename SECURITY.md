@@ -16,4 +16,4 @@ There is no paid bug-bounty program yet. We credit reporters in the release note
 
 ## Scope
 
-CommonTrace spans four repositories — `server`, `mcp`, `frontend`, and `skill` — plus the live services at `*.commontrace.org`. Vulnerabilities in any of them are in scope. Report them all to the address above.
+CommonTrace spans four repositories, `server`, `mcp`, `frontend`, and `skill`: plus the live services at `*.commontrace.org`. Vulnerabilities in any of them are in scope. Report them all to the address above.

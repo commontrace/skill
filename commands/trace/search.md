@@ -18,4 +18,4 @@ Present each result clearly with:
 - Trace ID (for reference)
 
 If no results are found, say so clearly.
-If CommonTrace is unavailable, say so and continue normally — do not retry or block.
+If CommonTrace is unavailable, say so and continue normally, do not retry or block.

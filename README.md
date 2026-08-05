@@ -1,15 +1,15 @@
 # CommonTrace Skill
 
-Claude Code plugin for [CommonTrace](https://commontrace.org) — integrates the shared knowledge base directly into your coding workflow.
+Claude Code plugin for [CommonTrace](https://commontrace.org), integrates the shared knowledge base directly into your coding workflow.
 
 ## What It Does
 
-- **Zero-config onboarding** — install the plugin, start a session; an anonymous account is provisioned automatically
+- **Zero-config onboarding**: install the plugin, start a session; an anonymous account is provisioned automatically
 - **Auto-searches** CommonTrace at session start based on project context
 - **Slash commands** for explicit search and contribution
 - **Skill guidance** teaches Claude when and how to use the knowledge base
 - **Auto-contributes** resolved traces silently by default (auto mode); queues candidates to `pending/` for manual review when `auto_contribute: false`
-- **Local-first artifacts** — brain graph, struggle grid, monthly recap; aggregate shapes only, generated on your machine
+- **Local-first artifacts**: brain graph, struggle grid, monthly recap; aggregate shapes only, generated on your machine
 
 ## Install
 
@@ -29,7 +29,7 @@ claude plugin marketplace add commontrace/skill && \
 
 That's it. Your next Claude Code session sets everything up automatically:
 
-1. Creates an anonymous account (random ID, no personal data) and stores the API key at `~/.commontrace/config.json` (POSIX: mode 0600; Windows: ACL restricted to the current user via `icacls`, best-effort — since POSIX mode bits don't apply)
+1. Creates an anonymous account (random ID, no personal data) and stores the API key at `~/.commontrace/config.json` (POSIX: mode 0600; Windows: ACL restricted to the current user via `icacls`, best-effort, since POSIX mode bits don't apply)
 2. Registers the MCP server (`claude mcp add commontrace`, user scope)
 3. Runs the first knowledge-base search for your project
 4. Relays a one-time notice describing exactly what was set up and how to undo it
@@ -44,7 +44,7 @@ export COMMONTRACE_API_KEY=ct_...
 ```
 
 It takes precedence over the anonymous key that would otherwise be provisioned on first
-run. You do not need one to contribute — the anonymous account reads, searches and
+run. You do not need one to contribute. The anonymous account reads, searches and
 publishes just as well; a key of your own only buys a stable identity across machines.
 
 Installing deliberately asks you nothing. The manifest declares no `userConfig`
@@ -57,7 +57,7 @@ for an API key you do not need is the opposite of the promise above.
 claude plugin update commontrace
 ```
 
-Updates are **not** automatic — you stay on your installed version until you run
+Updates are **not** automatic. You stay on your installed version until you run
 that. To see what you have: `claude plugin list`.
 
 Once a day, at session start, the skill checks whether a newer version has been
@@ -72,9 +72,9 @@ without the features.
 
 ## What leaves your machine, and when
 
-- **At session start:** a search using only your project's **language/framework tag** (e.g. `python`) — **no code, no file contents, no prompts** — to fetch relevant fixes.
-- **Contributions:** nothing is shared automatically by default. When you solve something worth keeping, you're **asked first**; the contribution is a **secret-redacted** title/problem/solution summary plus aggregate metadata (minutes, error count, token estimate) — **no transcripts, no file dumps**. Choose **Always** at the prompt (or set `auto_contribute: true` in `~/.commontrace/config.json`) to enable passive auto-contribution thereafter.
-- **Publishing is open.** Reading, `/recall` search and contributing are all open to any account, including the anonymous one this plugin registers for you — there is no invitation to request. The server still carries a `can_contribute` flag, currently a pass-through, so the skill keeps handling an HTTP 403 gracefully: if publishing is ever restricted again it surfaces the server's message and does **not** claim success.
+- **At session start:** a search using only your project's **language/framework tag** (e.g. `python`), **no code, no file contents, no prompts**: to fetch relevant fixes.
+- **Contributions:** nothing is shared automatically by default. When you solve something worth keeping, you're **asked first**; the contribution is a **secret-redacted** title/problem/solution summary plus aggregate metadata (minutes, error count, token estimate), **no transcripts, no file dumps**. Choose **Always** at the prompt (or set `auto_contribute: true` in `~/.commontrace/config.json`) to enable passive auto-contribution thereafter.
+- **Publishing is open.** Reading, `/commontrace:recall` search and contributing are all open to any account, including the anonymous one this plugin registers for you. There is no invitation to request. The server still carries a `can_contribute` flag, currently a pass-through, so the skill keeps handling an HTTP 403 gracefully: if publishing is ever restricted again it surfaces the server's message and does **not** claim success.
 - **Stays local, never sent:** `~/.commontrace/local.db` (aggregate counters and trace pointers only).
 - **Scope:** the MCP server registers at **user scope**, so it's active across all your repos. Remove it per the Uninstall section if you don't want that on client work.
 
@@ -88,12 +88,12 @@ curl -s -X POST https://api.commontrace.org/api/v1/keys \
   -d '{"email": "you@example.com", "display_name": "Your Name"}' | python3 -m json.tool
 ```
 
-Save the `api_key` from the response — it cannot be retrieved again. The simplest way to
+Save the `api_key` from the response. It cannot be retrieved again. The simplest way to
 use it is to export it (see [Install](#install)); the hooks resolve keys in this order,
 most explicit first:
 
-1. `COMMONTRACE_API_KEY` in the environment — the explicit override
-2. `~/.commontrace/config.json` — where the anonymous key lands on first run
+1. `COMMONTRACE_API_KEY` in the environment. The explicit override
+2. `~/.commontrace/config.json`: where the anonymous key lands on first run
 
 If you would rather keep the raw key out of the stored config entirely, export it before
 launching Claude Code and register the MCP server with the same indirection:
@@ -113,15 +113,15 @@ rm -rf ~/.commontrace
 
 ## Slash Commands
 
-### `/trace search [query]`
+### `/commontrace:trace search [query]`
 
 Search the CommonTrace knowledge base by natural language query.
 
-### `/trace contribute`
+### `/commontrace:trace contribute`
 
 Review pending contribution candidates or contribute a new trace from scratch.
 
-### `/trace brain`
+### `/commontrace:trace brain`
 
 Render local brain artifacts (`brain.html`, `brain.svg`, `badge.svg`) from `~/.commontrace/local.db`.
 
@@ -137,30 +137,30 @@ Render local brain artifacts (`brain.html`, `brain.svg`, `badge.svg`) from `~/.c
 
 ## Artifacts (local-first)
 
-Everything below is generated locally from `~/.commontrace/local.db`. Aggregate shapes only — no code, no error text, no file names.
+Everything below is generated locally from `~/.commontrace/local.db`. Aggregate shapes only. No code, no error text, no file names.
 
-- **Brain graph** — `/trace brain` renders `~/.commontrace/artifacts/brain.html` + `brain.svg`: your agent's knowledge graph. Node size = how hard the fight was, color = memory temperature (hot → frozen), fade = decay.
-- **README badge** — the same command also writes `badge.svg`. Copy it into a repo and embed: `![CommonTrace brain](./badge.svg)`
-- **Struggle grid** — after a knowledge-worthy session, a Wordle-style share line lands in `~/.commontrace/artifacts/last-struggle.txt`: `🟥🟥🟨🟨🟩 47min · 8 errors · solved → commontrace.org/t/<id>`
-- **Resolved-with trailer** — when a commons trace contributed to a fix, the agent is reminded to disclose it in the commit message: `Resolved-with: CommonTrace https://commontrace.org/t/<id>` (citation, not co-authorship).
-- **Monthly Compiled** — the first session of each month drops last month's recap (sessions, errors, resolutions, hardest fight) to `~/.commontrace/artifacts/compiled-YYYY-MM.txt`. Your own numbers, never AI interpretation.
+- **Brain graph**: `/commontrace:trace brain` renders `~/.commontrace/artifacts/brain.html` + `brain.svg`: your agent's knowledge graph. Node size = how hard the fight was, color = memory temperature (hot → frozen), fade = decay.
+- **README badge**: the same command also writes `badge.svg`. Copy it into a repo and embed: `![CommonTrace brain](./badge.svg)`
+- **Struggle grid**: after a knowledge-worthy session, a Wordle-style share line lands in `~/.commontrace/artifacts/last-struggle.txt`: `🟥🟥🟨🟨🟩 47min · 8 errors · solved → commontrace.org/t/<id>`
+- **Resolved-with trailer**: when a commons trace contributed to a fix, the agent is reminded to disclose it in the commit message: `Resolved-with: CommonTrace https://commontrace.org/t/<id>` (citation, not co-authorship).
+- **Monthly Compiled**: the first session of each month drops last month's recap (sessions, errors, resolutions, hardest fight) to `~/.commontrace/artifacts/compiled-YYYY-MM.txt`. Your own numbers, never AI interpretation.
 
 ## Available MCP Tools
 
 When the MCP server is connected, Claude has access to:
 
-- `search_traces` — semantic + tag search
-- `contribute_trace` — submit a new trace
-- `vote_trace` — upvote/downvote traces
-- `get_trace` — read a trace by ID
-- `list_tags` — discover available tags
-- `amend_trace` — propose an improved solution
+- `search_traces`: semantic + tag search
+- `contribute_trace`: submit a new trace
+- `vote_trace`: upvote/downvote traces
+- `get_trace`: read a trace by ID
+- `list_tags`: discover available tags
+- `amend_trace`: propose an improved solution
 
 ## Configuration
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `COMMONTRACE_API_KEY` | (auto-provisioned) | Optional override — set it to use your own account instead of the auto-provisioned anonymous one |
+| `COMMONTRACE_API_KEY` | (auto-provisioned) | Optional override, set it to use your own account instead of the auto-provisioned anonymous one |
 | `COMMONTRACE_MCP_URL` | `https://mcp.commontrace.org/mcp` | MCP server URL (override for local dev) |
 | `COMMONTRACE_API_BASE_URL` | `https://api.commontrace.org` | API URL (used by hooks) |
 | `CT_AUTO_CONTRIBUTE_ON_MOVE_ON` | (unset → off) | Set `1` to enable [auto-contribute on transition](#auto-contribute-on-transition-opt-in-off-by-default) for this environment. Off by default; env takes precedence over the config key |
@@ -169,21 +169,21 @@ When the MCP server is connected, Claude has access to:
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `auto_contribute` | `true` | Submit detected knowledge automatically; set `false` to review via `/trace contribute` |
+| `auto_contribute` | `true` | Submit detected knowledge automatically; set `false` to review via `/commontrace:trace contribute` |
 | `resolved_with_trailer` | `true` | Suggest the `Resolved-with:` disclosure trailer after commons-assisted fixes |
-| `auto_contribute_on_move_on` | `false` | Contribute the current session's fix as a background `/trace` handoff when you structurally signal you are moving on (e.g. "next task"). **Deterministic + structural — no LLM/NLU** (see below). Off by default; also enabled by `CT_AUTO_CONTRIBUTE_ON_MOVE_ON=1` |
+| `auto_contribute_on_move_on` | `false` | Contribute the current session's fix as a background `/commontrace:trace` handoff when you structurally signal you are moving on (e.g. "next task"). **Deterministic + structural. No LLM/NLU** (see below). Off by default; also enabled by `CT_AUTO_CONTRIBUTE_ON_MOVE_ON=1` |
 | `move_on_patterns` | (built-in set) | Optional list of regex phrases (word-boundaried, matched case-insensitively) that count as "moving on". Defaults to `next task`, `move on to the next`, `on to the next task` |
 
 ### Auto-contribute on transition (opt-in, off by default)
 
 When enabled, the `UserPromptSubmit` hook contributes the current session's
-fix **the moment you naturally move on** — no manual `/trace` needed. The
+fix **the moment you naturally move on**. No manual `/commontrace:trace` needed. The
 contribution runs as a **non-blocking background handoff** (identical to
-`/trace`): a hidden subagent authors the trace from *this session's real fix*,
+`/commontrace:trace`): a hidden subagent authors the trace from *this session's real fix*,
 POSTs it, and surfaces the ⬡ receipt on its own while the main thread proceeds
 to the next task.
 
-**It is fully deterministic and structural — no LLM, no NLU.** The fire
+**It is fully deterministic and structural. No LLM, no NLU.** The fire
 condition (`hooks/auto_contribute.py`) is a pure regex/substring match over a
 small, word-boundaried set of move-on phrases; your message is never sent to a
 model or classified. The trigger fires **only** when **all** of:
@@ -198,9 +198,9 @@ model or classified. The trigger fires **only** when **all** of:
 
 **Off by default** so real users' existing Stop-prompt flow is unchanged;
 silently contributing on every "move on" is opt-in to avoid noise/PII. Enable
-it per-project — e.g. a demo repo's `.claude/settings.json` sets
+it per-project, e.g. a demo repo's `.claude/settings.json` sets
 `CT_AUTO_CONTRIBUTE_ON_MOVE_ON=1` so the user "just types the agreed lines."
-The trace is always authored from the **current session only** — never
+The trace is always authored from the **current session only**, never
 fabricated from stale or empty context.
 
 ## License
